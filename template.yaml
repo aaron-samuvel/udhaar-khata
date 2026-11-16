@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Udhaar Khata — a serverless credit ledger for Indian kirana shops.
+  Amazon API Gateway HTTP API, AWS Lambda, Amazon DynamoDB (on-demand),
+  Amazon S3 website, Amazon EventBridge Scheduler, and AWS Step Functions.
+  There is no server to babysit and no CI pipeline. Idle cost is near zero.
+
+Parameters:
+  ShopId:
+    Type: String
+    Default: default
+    Description: Partition key id for this shop's ledger (use one stack per shop).
+  OverdueDays:
+    Type: Number
+    Default: 7
+    MinValue: 0
+    Description: >
+      Customers with unpaid dues older than this many days are included in the
+      daily reminder run. For a live demo, start the state machine with
+      {"overdue_days": 0} to include today's dues.
+  ProjectPrefix:
+    Type: String
+    Default: udhaar-khata
+    Description: Prefix for the website bucket and resource names.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Timeout: 15
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref LedgerTable
+        SHOP_ID: !Ref ShopId
+        OVERDUE_DAYS: !Ref OverdueDays
+
+Resources:
+  LedgerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectPrefix}-${AWS::AccountId}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: UdhaarKhata
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: Udhaar Khata HTTP API
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - content-type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 600
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectPrefix}-api"
+      CodeUri: src/
+      Handler: api.handler
+      Description: HTTP API for transactions, customers, and reminder runs
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref ReminderStateMachine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LedgerTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+                - states:DescribeExecution
+              Resource:
+                - !Ref ReminderStateMachine
+                - !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${ProjectPrefix}-reminders:*"
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /health
+            Method: GET
+        PostTxn:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /transactions
+            Method: POST
+        GetCustomers:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /customers
+            Method: GET
+        GetCustomerTxns:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /customers/{name}/transactions
+            Method: GET
+        GetReminders:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /reminders
+            Method: GET
+        PostReminders:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /reminders/run
+            Method: POST
+
+  RemindersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectPrefix}-reminders"
+      CodeUri: src/
+      Handler: reminders.handler
+      Description: Find overdue customers and write reminder records with WhatsApp links
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LedgerTable
+
+  ReminderStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${ProjectPrefix}-reminders"
+      Type: STANDARD
+      Definition:
+        Comment: Find overdue udhaar customers and write reminder records
+        StartAt: FindAndWriteReminders
+        States:
+          FindAndWriteReminders:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: ${RemindersFunctionArn}
+              Payload:
+                source: step-functions
+                input.$: $
+            OutputPath: $.Payload
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2.0
+            End: true
+      DefinitionSubstitutions:
+        RemindersFunctionArn: !GetAtt RemindersFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RemindersFunction
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartReminderStateMachine
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Ref ReminderStateMachine
+
+  DailyReminderSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${ProjectPrefix}-daily-reminders"
+      Description: Daily 9:00 AM India time scan for overdue udhaar customers
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: cron(0 9 * * ? *)
+      ScheduleExpressionTimezone: Asia/Kolkata
+      State: ENABLED
+      Target:
+        Arn: !Ref ReminderStateMachine
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: "{}"
+
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectPrefix}-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - "*"
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedHeaders:
+              - "*"
+            MaxAge: 300
+      Tags:
+        - Key: Project
+          Value: UdhaarKhata
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadWebsite
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${WebsiteBucket.Arn}/*"
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL (no stage suffix)
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  WebsiteUrl:
+    Description: S3 website URL (HTTP)
+    Value: !Sub "http://${WebsiteBucket}.s3-website.${AWS::Region}.amazonaws.com"
+  WebsiteBucketName:
+    Description: S3 bucket to upload the frontend into
+    Value: !Ref WebsiteBucket
+  StateMachineArn:
+    Description: Reminder Step Functions state machine ARN
+    Value: !Ref ReminderStateMachine
+  TableName:
+    Description: DynamoDB ledger table
+    Value: !Ref LedgerTable
+  StackRegion:
+    Description: Deployed region
+    Value: !Ref AWS::Region

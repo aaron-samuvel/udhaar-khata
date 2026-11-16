@@ -1,0 +1,20 @@
+version = 0.1
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+stack_name = "udhaar-khata"
+resolve_s3 = true
+s3_prefix = "udhaar-khata"
+region = "ap-south-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM"
+disable_rollback = false
+parameter_overrides = "ShopId=\"default\" OverdueDays=\"7\" ProjectPrefix=\"udhaar-khata\""
+image_repositories = []
+
+[default.delete.parameters]
+stack_name = "udhaar-khata"
+region = "ap-south-1"

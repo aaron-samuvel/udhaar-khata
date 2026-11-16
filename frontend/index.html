@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Udhaar Khata — kirana credit ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="config.js"></script>
+  <style>
+    :root {
+      --paper: #f3eadb;
+      --card: #fffaf2;
+      --ink: #1c261f;
+      --muted: #5c6b62;
+      --line: #e2d5c0;
+      --teal: #0f5c4c;
+      --teal-dark: #0a3f35;
+      --saffron: #c56a16;
+      --due: #9b2c2c;
+      --ok: #0f5c4c;
+      --whatsapp: #128c7e;
+      --shadow: 0 10px 30px rgba(28, 38, 31, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Source Sans 3", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 400px at 10% -10%, rgba(197, 106, 22, 0.12), transparent 50%),
+        var(--paper);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+    header {
+      background: linear-gradient(135deg, var(--teal-dark), var(--teal));
+      color: #f8f3ea;
+      padding: 1.4rem 1.2rem 1.5rem;
+    }
+    header .wrap, main { max-width: 920px; margin: 0 auto; }
+    .eyebrow {
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      opacity: 0.8;
+      margin: 0 0 0.35rem;
+    }
+    h1 {
+      font-family: Fraunces, Georgia, serif;
+      font-size: 2rem;
+      margin: 0;
+      font-weight: 700;
+    }
+    header p { margin: 0.4rem 0 0; max-width: 36rem; color: #e8ddd0; }
+    main { padding: 1.2rem; }
+    .banner {
+      background: #fde8d0;
+      border: 1px solid #e8b780;
+      color: #7a3e08;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    label { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+    .hint { font-weight: 400; color: var(--muted); font-size: 0.9rem; }
+    .row { display: flex; gap: 0.5rem; align-items: stretch; }
+    input[type="text"] {
+      flex: 1;
+      font: inherit;
+      padding: 0.8rem 0.9rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+    input[type="text"]:focus {
+      outline: 2px solid var(--teal);
+      border-color: var(--teal);
+    }
+    button {
+      font: inherit;
+      font-weight: 600;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      padding: 0.8rem 1rem;
+    }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .primary { background: var(--teal); color: #fff; }
+    .primary:hover:not(:disabled) { background: var(--teal-dark); }
+    .ghost {
+      background: #efe4d2;
+      color: var(--ink);
+    }
+    .mic { min-width: 3rem; font-size: 1.15rem; }
+    .mic.live { background: #9b2c2c; color: #fff; }
+    .phone-row { margin-top: 0.7rem; }
+    .status {
+      min-height: 1.3rem;
+      margin-top: 0.7rem;
+      color: var(--muted);
+    }
+    .status.error { color: var(--due); }
+    .status.ok { color: var(--ok); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 1rem;
+    }
+    @media (max-width: 740px) {
+      .row { flex-wrap: wrap; }
+      .row input[type="text"] { min-width: 100%; }
+      .grid { grid-template-columns: 1fr; }
+      h1 { font-size: 1.7rem; }
+    }
+    h2 {
+      font-family: Fraunces, Georgia, serif;
+      font-size: 1.2rem;
+      margin: 0 0 0.7rem;
+    }
+    .list { display: flex; flex-direction: column; gap: 0.55rem; }
+    .item {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.7rem;
+      padding: 0.75rem 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+    }
+    .item:hover, .item.active { border-color: var(--teal); }
+    .item .name { font-weight: 600; }
+    .item .meta { color: var(--muted); font-size: 0.85rem; }
+    .amt.due { color: var(--due); font-weight: 700; }
+    .amt.settled { color: var(--ok); font-weight: 700; }
+    .examples { color: var(--muted); font-size: 0.9rem; margin: 0.3rem 0 0.8rem; }
+    .examples button {
+      background: transparent;
+      color: var(--teal);
+      padding: 0;
+      text-decoration: underline;
+      font-weight: 600;
+    }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin: 0.6rem 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .wa {
+      display: inline-block;
+      margin-top: 0.35rem;
+      background: var(--whatsapp);
+      color: #fff;
+      text-decoration: none;
+      padding: 0.4rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .empty { color: var(--muted); font-size: 0.95rem; }
+    .txn { border-bottom: 1px dashed var(--line); padding: 0.55rem 0; }
+    .txn:last-child { border-bottom: 0; }
+    footer {
+      max-width: 920px;
+      margin: 0 auto 2rem;
+      padding: 0 1.2rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <p class="eyebrow">Serverless credit ledger</p>
+      <h1>Udhaar Khata</h1>
+      <p>Type or speak a line the way you would write it in a paper khata. The shop ledger updates at once, and overdue dues get a WhatsApp reminder link.</p>
+    </div>
+  </header>
+  <main>
+    <div class="banner" id="setupBanner">
+      This page is not connected to an API yet. After you run <strong>deploy.ps1</strong>, reload the S3 website URL it prints.
+    </div>
+    <section class="card">
+      <label for="sentence">New entry <span class="hint">· English or Hinglish</span></label>
+      <p class="examples">
+        Try
+        <button type="button" data-fill="Ramesh took 2 kg rice for 120 rupees">Ramesh took 2 kg rice for 120 rupees</button>
+        or
+        <button type="button" data-fill="Ramesh paid 50">Ramesh paid 50</button>
+        or
+        <button type="button" data-fill="Amit ne 200 ka udhaar liya">Amit ne 200 ka udhaar liya</button>
+      </p>
+      <div class="row">
+        <input id="sentence" type="text" autocomplete="off" placeholder="Ramesh took 2 kg rice for 120 rupees" />
+        <button type="button" class="ghost mic" id="micBtn" title="Speak with the browser microphone">🎤</button>
+        <button type="button" class="primary" id="addBtn">Add</button>
+      </div>
+      <div class="phone-row row">
+        <input id="phone" type="text" inputmode="tel" placeholder="Optional phone (10 digits) for WhatsApp" />
+      </div>
+      <div class="status" id="status"></div>
+    </section>
+    <div class="grid">
+      <section class="card">
+        <h2>Customers</h2>
+        <div class="list" id="customers"><p class="empty">No udhaar yet.</p></div>
+        <div id="history"></div>
+      </section>
+      <section class="card">
+        <h2>Reminders</h2>
+        <p class="hint">The daily Step Functions workflow runs at 9:00 AM India time. For the demo, generate reminders now.</p>
+        <label class="check">
+          <input type="checkbox" id="demoMode" checked />
+          Include today's dues (demo mode)
+        </label>
+        <button type="button" class="primary" id="remindBtn">Generate reminders</button>
+        <div class="status" id="remindStatus"></div>
+        <div class="list" id="reminders" style="margin-top:0.8rem"></div>
+      </section>
+    </div>
+  </main>
+  <footer>
+    Built with Amazon S3, API Gateway, AWS Lambda, DynamoDB, EventBridge Scheduler, and Step Functions. Idle cost is near zero. This demo API is open — do not store real customer data.
+  </footer>
+  <script>
+    const apiBase = (window.UDHAAR_API_URL || "").replace(/\/$/, "");
+    const setupNeeded = !apiBase || apiBase.includes("YOUR_API_ID");
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    if (setupNeeded) $("setupBanner").style.display = "block";
+
+    function setStatus(el, message, kind) {
+      el.textContent = message || "";
+      el.className = "status" + (kind ? " " + kind : "");
+    }
+
+    async function api(path, options) {
+      if (setupNeeded) throw new Error("Deploy the stack first, then open the website URL from deploy.ps1.");
+      const res = await fetch(apiBase + path, {
+        headers: { "content-type": "application/json", ...(options && options.headers) },
+        ...options
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Request failed (" + res.status + ")");
+      return body;
+    }
+
+    async function loadCustomers() {
+      const data = await api("/customers");
+      const root = $("customers");
+      if (!data.customers.length) {
+        root.innerHTML = '<p class="empty">No udhaar yet.</p>';
+        return;
+      }
+      root.innerHTML = data.customers.map((c) => {
+        const due = Number(c.balance) > 0;
+        return `<button type="button" class="item" data-name="${encodeURIComponent(c.name)}">
+          <div><div class="name">${c.name}</div><div class="meta">${c.phone ? c.phone + " · " : ""}${c.last_txn_at ? "updated " + c.last_txn_at.replace("T", " ").slice(0, 16) : ""}</div></div>
+          <div class="amt ${due ? "due" : "settled"}">${due ? fmt(c.balance) + " due" : "settled"}</div>
+        </button>`;
+      }).join("");
+      root.querySelectorAll(".item").forEach((btn) => {
+        btn.addEventListener("click", () => showHistory(decodeURIComponent(btn.dataset.name), btn));
+      });
+    }
+
+    async function showHistory(name, btn) {
+      document.querySelectorAll("#customers .item").forEach((el) => el.classList.remove("active"));
+      if (btn) btn.classList.add("active");
+      const data = await api("/customers/" + encodeURIComponent(name) + "/transactions");
+      const rows = data.transactions.map((t) => {
+        const sign = t.txn_type === "UDHAAR" ? "+" : "−";
+        return `<div class="txn"><strong>${t.txn_type === "UDHAAR" ? "Udhaar" : "Payment"} ${sign}${fmt(t.amount)}</strong>
+          <div class="meta">${t.raw_text}</div>
+          <div class="meta">${(t.created_at || "").replace("T", " ").slice(0, 19)}</div></div>`;
+      }).join("") || '<p class="empty">No lines yet.</p>';
+      $("history").innerHTML = `<h2 style="margin-top:1rem">Khata for ${data.customer.name}</h2>${rows}`;
+    }
+
+    async function loadReminders() {
+      const data = await api("/reminders");
+      const root = $("reminders");
+      if (!data.reminders.length) {
+        root.innerHTML = '<p class="empty">No reminder records yet.</p>';
+        return;
+      }
+      root.innerHTML = data.reminders.map((r) => `
+        <div class="item" style="cursor:default;flex-direction:column;align-items:flex-start">
+          <div style="width:100%;display:flex;justify-content:space-between;gap:0.5rem">
+            <div class="name">${r.name}</div>
+            <div class="amt due">${fmt(r.balance)}</div>
+          </div>
+          <div class="meta">${r.days_overdue} day(s) overdue</div>
+          <a class="wa" href="${r.whatsapp_url}" target="_blank" rel="noopener">WhatsApp reminder</a>
+        </div>`).join("");
+    }
+
+    async function addEntry() {
+      const text = $("sentence").value.trim();
+      const phone = $("phone").value.trim();
+      setStatus($("status"), "Saving…");
+      $("addBtn").disabled = true;
+      try {
+        const data = await api("/transactions", {
+          method: "POST",
+          body: JSON.stringify({ text, phone: phone || undefined })
+        });
+        const c = data.customer;
+        const verb = data.parsed.txn_type === "PAYMENT" ? "payment" : "udhaar";
+        setStatus($("status"), `${c.name}: recorded ${verb} of ${fmt(data.parsed.amount)}. Balance is now ${fmt(c.balance)}.`, "ok");
+        $("sentence").value = "";
+        await loadCustomers();
+      } catch (err) {
+        setStatus($("status"), err.message, "error");
+      } finally {
+        $("addBtn").disabled = false;
+      }
+    }
+
+    async function generateReminders() {
+      setStatus($("remindStatus"), "Starting the Step Functions reminder workflow…");
+      $("remindBtn").disabled = true;
+      try {
+        const payload = $("demoMode").checked ? { overdue_days: 0 } : {};
+        const data = await api("/reminders/run", { method: "POST", body: JSON.stringify(payload) });
+        const n = data.reminders_written;
+        const suffix = data.status && data.status !== "SUCCEEDED" ? ` Workflow status: ${data.status}.` : "";
+        setStatus($("remindStatus"), `Wrote ${n} reminder record${n === 1 ? "" : "s"}.${suffix}`, "ok");
+        await loadReminders();
+      } catch (err) {
+        setStatus($("remindStatus"), err.message, "error");
+      } finally {
+        $("remindBtn").disabled = false;
+      }
+    }
+
+    function setupMic() {
+      const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const btn = $("micBtn");
+      if (!Speech) {
+        btn.title = "Voice input needs Chrome, Edge, or Safari";
+        btn.addEventListener("click", () => setStatus($("status"), "Voice input is not supported in this browser. Use Chrome or Edge, or type the line.", "error"));
+        return;
+      }
+      const rec = new Speech();
+      rec.lang = "en-IN";
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onresult = (event) => {
+        $("sentence").value = event.results[0][0].transcript;
+        setStatus($("status"), "Captured speech. Check the line and press Add.");
+      };
+      rec.onerror = () => setStatus($("status"), "Could not capture speech. You can type the line instead.", "error");
+      rec.onend = () => btn.classList.remove("live");
+      btn.addEventListener("click", () => {
+        try {
+          btn.classList.add("live");
+          rec.start();
+          setStatus($("status"), "Listening…");
+        } catch (err) {
+          btn.classList.remove("live");
+        }
+      });
+    }
+
+    document.querySelectorAll("[data-fill]").forEach((btn) => {
+      btn.addEventListener("click", () => { $("sentence").value = btn.dataset.fill; $("sentence").focus(); });
+    });
+    $("addBtn").addEventListener("click", addEntry);
+    $("sentence").addEventListener("keydown", (event) => { if (event.key === "Enter") addEntry(); });
+    $("remindBtn").addEventListener("click", generateReminders);
+    setupMic();
+
+    if (!setupNeeded) {
+      loadCustomers().catch((err) => setStatus($("status"), err.message, "error"));
+      loadReminders().catch(() => {});
+    }
+  </script>
+</body>
+</html>

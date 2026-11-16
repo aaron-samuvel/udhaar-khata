@@ -1,0 +1,4 @@
+# Local tests only. Lambda code has no pip dependencies (boto3 is in the AWS runtime).
+pytest>=8.0
+moto[dynamodb,stepfunctions]>=5.0
+boto3>=1.34
