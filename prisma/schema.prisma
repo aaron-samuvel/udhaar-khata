@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A customer of the kirana shop with a running udhaar (credit) balance.
+model Customer {
+  nameKey     String    @id // normalized uppercase name, used as the stable key
+  name        String
+  balance     Float     @default(0)
+  phone       String?
+  firstDueAt  DateTime? // when the current outstanding cycle started
+  lastTxnAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  transactions Transaction[]
+
+  @@index([balance])
+}
+
+// An immutable ledger line: either UDHAAR (credit given) or PAYMENT (cash received).
+model Transaction {
+  id        String   @id @default(cuid())
+  nameKey   String
+  name      String
+  amount    Float
+  txnType   String // "UDHAAR" | "PAYMENT"
+  rawText   String
+  createdAt DateTime @default(now())
+
+  customer Customer @relation(fields: [nameKey], references: [nameKey])
+
+  @@index([nameKey, createdAt])
+}
+
+// A reminder record produced by a reminder run, with a ready WhatsApp link.
+model Reminder {
+  id           String   @id @default(cuid())
+  nameKey      String
+  name         String
+  balance      Float
+  daysOverdue  Int
+  phone        String?
+  whatsappUrl  String
+  message      String
+  runId        String
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
