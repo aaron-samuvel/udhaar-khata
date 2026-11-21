@@ -48,6 +48,25 @@ const PAYMENT_WORDS = new Set([
   "clearing",
   "deposit",
   "deposited",
+  // money the customer GAVE to the shop (fixed after the QA battery found
+  // "Ramesh gave 50" / "collected 50 from Ramesh" / "Ramesh se 50 mila"
+  // misclassified as new credit).
+  "gave",
+  "gaye",
+  "gae",
+  "collect",
+  "collects",
+  "collected",
+  "received",
+  "receive",
+  "mila",
+  "milaa",
+  "mile",
+  "milgaya",
+  "milgayi",
+  "vasool",
+  "vasoole",
+  "vasoolee",
 ]);
 
 const UDHAAR_WORDS = new Set([
@@ -201,6 +220,17 @@ function extractAmount(text: string): number | null {
   return round2(amounts[amounts.length - 1]);
 }
 
+/**
+ * Capitalize and join a picked name ("ramesh kumar" -> "Ramesh Kumar").
+ */
+function titleCaseName(parts: string[]): string {
+  return parts
+    .join(" ")
+    .split(/\s+/)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
 function extractCustomer(text: string): string | null {
   const cleaned = text.replace(/[₹,]/g, " ");
   const words = cleaned.match(/[A-Za-z][A-Za-z'.]*/g) ?? [];
@@ -211,13 +241,31 @@ function extractCustomer(text: string): string | null {
     if (NAME_STOP.has(lowered)) break;
     parts.push(word);
   }
+
+  // Second chance (added after the QA battery): sentences that don't START
+  // with the customer's name — "₹120 udhaar Ramesh", "udhaar 200 Ramesh",
+  // "liya Ramesh ne 100". Scan the whole line for the first word that is
+  // neither a stop word nor an honorific, and take up to three words from
+  // there (stopping at the next stop word).
+  if (parts.length === 0) {
+    for (let i = 0; i < words.length; i++) {
+      const lowered = words[i].toLowerCase().replace(/\.$/, "");
+      if (HONORIFICS.has(lowered) || NAME_STOP.has(lowered)) continue;
+      const rest: string[] = [words[i]];
+      for (let j = i + 1; j < words.length && rest.length < 3; j++) {
+        const nextLowered = words[j].toLowerCase().replace(/\.$/, "");
+        if (HONORIFICS.has(nextLowered)) continue;
+        if (NAME_STOP.has(nextLowered)) break;
+        rest.push(words[j]);
+      }
+      parts.push(...rest);
+      break;
+    }
+  }
+
   if (parts.length === 0) return null;
   // Most personal names in this context are one to three words.
-  const name = parts.slice(0, 3).join(" ");
-  return name
-    .split(/\s+/)
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(" ");
+  return titleCaseName(parts.slice(0, 3));
 }
 
 export function parse(input: string | null | undefined): ParseResult {

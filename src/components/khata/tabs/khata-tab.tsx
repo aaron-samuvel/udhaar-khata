@@ -29,6 +29,7 @@ import {
   SearchCheck,
   X,
   ClipboardPen,
+  WifiOff,
 } from "lucide-react";
 import { formatINR } from "@/lib/format";
 import { parse } from "@/lib/parser";
@@ -45,6 +46,9 @@ import { emptyEntry, EntryForm, type EntryValues } from "../entry-form";
 
 type EntryMode = "parse" | "manual";
 type Status = { msg: string; kind: "ok" | "error" | "" };
+
+/** localStorage key for the in-progress entry (survives page reloads). */
+const DRAFT_KEY = "udhaar-khata-draft-v1";
 
 interface ConfirmState {
   text: string;
@@ -82,6 +86,46 @@ export function KhataTab({
     error: string;
     body: Record<string, unknown>;
   } | null>(null);
+
+  /* ---------- offline awareness (no fake offline sync — honest banner) ---------- */
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    setOnline(navigator.onLine);
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, []);
+
+  /* ---------- draft persistence: typed text + manual form survive reloads ---------- */
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const d = JSON.parse(raw) as { sentence?: string; manual?: EntryValues };
+        if (typeof d.sentence === "string") setSentence(d.sentence);
+        if (d.manual && typeof d.manual === "object") {
+          setManual({ ...emptyEntry, ...d.manual });
+        }
+      }
+    } catch {
+      // corrupted draft — ignore, start fresh
+    }
+    setDraftHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!draftHydrated) return;
+    try {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ sentence, manual }));
+    } catch {
+      // storage full/blocked — drafts are a nicety, not a requirement
+    }
+  }, [sentence, manual, draftHydrated]);
 
   /* ---------- voice input (preserved feature) ---------- */
   const voice = useVoiceInput((text) => setSentence(text));
@@ -134,6 +178,13 @@ export function KhataTab({
   /* ---------- save (the ONLY call that writes to the ledger) ---------- */
   const saveEntry = useCallback(
     async (values: EntryValues, forceBody?: Record<string, unknown>) => {
+      if (!navigator.onLine) {
+        setStatus({
+          msg: "You are offline — the entry was kept as a draft. Save it once the connection returns.",
+          kind: "error",
+        });
+        return;
+      }
       const phone = values.phone.trim();
       if (phone && !isValidPhone(phone)) {
         setStatus({
@@ -258,6 +309,20 @@ export function KhataTab({
 
   return (
     <div className="space-y-5">
+      {/* ---------- offline banner ---------- */}
+      {!online && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-2xl border border-[#9b2c2c]/40 bg-[#f6d9d9] px-4 py-3"
+        >
+          <WifiOff className="mt-0.5 size-4 shrink-0 text-[#9b2c2c]" aria-hidden="true" />
+          <p className="text-sm text-[#7a231f]">
+            You are offline. Entries can&apos;t be saved right now — anything you type
+            is kept as a draft and will still be here when the connection returns.
+          </p>
+        </div>
+      )}
+
       {/* ---------- demo banner ---------- */}
       {demoData && !demoDismissed && (
         <div

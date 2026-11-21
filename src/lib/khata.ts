@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
-import { formatINR, istDayKey, istDayStart } from "@/lib/format";
+import { formatINR, istDayKey, istDayStart, istTimestamp } from "@/lib/format";
 import type {
+  AuditPublic,
   CustomerPublic,
   ReminderPublic,
   SettingsPublic,
@@ -422,6 +423,28 @@ export async function listReminders(limit = 50): Promise<ReminderPublic[]> {
   return rows.map(publicReminder);
 }
 
+/* ---------------- audit trail ---------------- */
+
+/**
+ * Read-only view of the append-only audit trail. Every financially
+ * significant action (entry created, entry reversed, customer updated,
+ * settings changed, demo reset) is recorded here — surfaced in Settings.
+ */
+export async function listAuditEvents(limit = 50): Promise<AuditPublic[]> {
+  const events = await db.auditEvent.findMany({
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Math.max(limit, 1), 200),
+  });
+  return events.map((e) => ({
+    id: e.id,
+    action: e.action,
+    entity: e.entity,
+    entityId: e.entityId,
+    data: e.data,
+    createdAt: e.createdAt.toISOString(),
+  }));
+}
+
 /**
  * Reminder run (the daily-job equivalent): find customers whose dues are
  * older than `overdueDays` (default from Settings) and write reminder records
@@ -478,6 +501,61 @@ export async function customerReminder(name: string): Promise<ReminderPublic | n
     },
   });
   return publicReminder(row);
+}
+
+/**
+ * WhatsApp-ready STATEMENT for one customer: their last ledger lines (real
+ * data only), the outstanding balance and the shop name. Unlike a reminder,
+ * a statement works for settled customers too — useful as a receipt.
+ */
+export async function customerStatement(
+  name: string
+): Promise<{
+  whatsappUrl: string;
+  message: string;
+  customer: CustomerPublic;
+  lines: number;
+} | null> {
+  const key = nameKey(name);
+  const c = await db.customer.findUnique({ where: { nameKey: key } });
+  if (!c) return null;
+
+  const txns = await db.transaction.findMany({
+    where: { nameKey: key, reversed: false, isReversal: false },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  const settings = await getSettings();
+
+  const lines = txns.map((t) => {
+    const sign = t.txnType === "UDHAAR" ? "+" : "−";
+    return `${istTimestamp(t.createdAt)}  ${sign}₹${(t.amountPaise / 100).toFixed(2)} — ${t.rawText}`;
+  });
+
+  const balanceLine =
+    c.balancePaise > 0
+      ? `Udhaar pending: ₹${(c.balancePaise / 100).toFixed(2)}`
+      : `Khata settled: ₹${(c.balancePaise / 100).toFixed(2)}`;
+
+  const message = [
+    `*${settings.shopName}* — khata statement`,
+    `Customer: ${c.name}`,
+    "",
+    ...(lines.length > 0 ? lines : ["(no entries yet)"]),
+    "",
+    balanceLine,
+    c.balancePaise > 0
+      ? "Kripya jald payment kar dein. Dhanyavaad!"
+      : "Payment ke liye dhanyavaad!",
+  ].join("\n");
+
+  const encoded = encodeURIComponent(message);
+  const digits = normalizePhone(c.phone);
+  const whatsappUrl = digits
+    ? `https://wa.me/91${digits}?text=${encoded}`
+    : `https://wa.me/?text=${encoded}`;
+
+  return { whatsappUrl, message, customer: publicCustomer(c), lines: lines.length };
 }
 
 /* ---------------- reports ---------------- */
@@ -676,6 +754,299 @@ export async function exportBackupJson() {
     transactions: transactions.map(publicTxn),
     reminders: reminders.map(publicReminder),
     auditEvents,
+  };
+}
+
+/* ---------------- restore from backup ---------------- */
+
+interface BackupCustomerInput {
+  nameKey: string;
+  name: string;
+  phone?: string | null;
+  notes?: string | null;
+}
+
+interface BackupTxnInput {
+  id?: string;
+  nameKey: string;
+  name: string;
+  amountPaise: number;
+  txnType: string;
+  rawText: string;
+  note?: string | null;
+  reversed?: boolean;
+  isReversal?: boolean;
+  createdAt: string;
+}
+
+export interface RestoreResult {
+  mode: "replace" | "merge";
+  importedCustomers: number;
+  importedTransactions: number;
+  skippedTransactions: number;
+  exportedAt: string | null;
+}
+
+const MAX_BACKUP_CUSTOMERS = 1000;
+const MAX_BACKUP_TRANSACTIONS = 5000;
+
+/**
+ * Restore a ledger from a backup produced by exportBackupJson().
+ *
+ * - "replace": wipe the current ledger (customers/transactions/reminders) and
+ *   rebuild it from the backup. Audit history is KEPT and the import itself is
+ *   recorded as a new audit event.
+ * - "merge": add only what is missing (customers that don't exist yet,
+ *   transactions whose id is new). Existing profile edits are never clobbered.
+ *
+ * Balances are ALWAYS recomputed from the imported ledger lines (never trusted
+ * from the file), so the ledger stays internally consistent even if the backup
+ * was truncated or hand-edited.
+ */
+export async function restoreBackup(
+  backup: unknown,
+  mode: "replace" | "merge"
+): Promise<RestoreResult> {
+  if (typeof backup !== "object" || backup === null) {
+    throw new Error("The backup file does not look like a Udhaar Khata backup.");
+  }
+  const b = backup as Record<string, unknown>;
+  if (b.format !== "udhaar-khata-backup") {
+    throw new Error(
+      "This file is not a Udhaar Khata backup (missing the format marker). Use the 'Full backup (JSON)' export."
+    );
+  }
+  if (!Array.isArray(b.customers) || !Array.isArray(b.transactions)) {
+    throw new Error("The backup is missing its customers or transactions list.");
+  }
+  if (b.customers.length > MAX_BACKUP_CUSTOMERS) {
+    throw new Error(`Too many customers in the backup (max ${MAX_BACKUP_CUSTOMERS}).`);
+  }
+  if (b.transactions.length > MAX_BACKUP_TRANSACTIONS) {
+    throw new Error(`Too many transactions in the backup (max ${MAX_BACKUP_TRANSACTIONS}).`);
+  }
+
+  // ---- validate every row before touching the database ----
+  const customers: BackupCustomerInput[] = [];
+  for (let i = 0; i < b.customers.length; i++) {
+    const c = b.customers[i] as Record<string, unknown>;
+    const key = typeof c.nameKey === "string" ? c.nameKey.trim().toUpperCase() : "";
+    const name = typeof c.name === "string" ? c.name.trim() : "";
+    if (!key || !name) {
+      throw new Error(`Customer row ${i + 1} is missing a name.`);
+    }
+    customers.push({
+      nameKey: key,
+      name,
+      phone: typeof c.phone === "string" ? normalizePhone(c.phone) : null,
+      notes: typeof c.notes === "string" ? c.notes : null,
+    });
+  }
+
+  const transactions: BackupTxnInput[] = [];
+  for (let i = 0; i < b.transactions.length; i++) {
+    const t = b.transactions[i] as Record<string, unknown>;
+    const key = typeof t.nameKey === "string" ? t.nameKey.trim().toUpperCase() : "";
+    const paise = typeof t.amountPaise === "number" ? t.amountPaise : NaN;
+    const type = typeof t.txnType === "string" ? t.txnType : "";
+    const at = typeof t.createdAt === "string" ? new Date(t.createdAt) : null;
+    if (!key) throw new Error(`Transaction row ${i + 1} is missing the customer.`);
+    if (!Number.isInteger(paise) || paise <= 0 || paise > RUPEE_MAX * 100) {
+      throw new Error(`Transaction row ${i + 1} has an invalid amount.`);
+    }
+    if (type !== "UDHAAR" && type !== "PAYMENT") {
+      throw new Error(`Transaction row ${i + 1} has an unknown entry type.`);
+    }
+    if (!at || Number.isNaN(at.getTime())) {
+      throw new Error(`Transaction row ${i + 1} has an invalid date.`);
+    }
+    transactions.push({
+      id: typeof t.id === "string" && t.id ? t.id : undefined,
+      nameKey: key,
+      name: typeof t.name === "string" && t.name.trim() ? t.name.trim() : key,
+      amountPaise: paise,
+      txnType: type,
+      rawText:
+        typeof t.rawText === "string" && t.rawText.trim()
+          ? t.rawText
+          : "Restored from backup",
+      note: typeof t.note === "string" ? t.note : null,
+      reversed: t.reversed === true,
+      isReversal: t.isReversal === true,
+      createdAt: at.toISOString(),
+    });
+  }
+
+  // Customer stubs for transactions whose customer row is missing from the
+  // backup (keeps referential integrity without dropping ledger lines).
+  const known = new Set(customers.map((c) => c.nameKey));
+  for (const t of transactions) {
+    if (!known.has(t.nameKey)) {
+      customers.push({ nameKey: t.nameKey, name: t.name, phone: null, notes: null });
+      known.add(t.nameKey);
+    }
+  }
+
+  const exportedAt = typeof b.exportedAt === "string" ? b.exportedAt : null;
+
+  const result = await db.$transaction(
+    async (tx) => {
+      let skipped = 0;
+
+      if (mode === "replace") {
+        await tx.reminder.deleteMany();
+        await tx.transaction.deleteMany();
+        await tx.customer.deleteMany();
+      }
+
+      // ---- customers ----
+      if (mode === "merge") {
+        // Merge never overwrites an existing customer's profile edits.
+        const existing = new Set(
+          (
+            await tx.customer.findMany({
+              where: { nameKey: { in: customers.map((c) => c.nameKey) } },
+              select: { nameKey: true },
+            })
+          ).map((r) => r.nameKey)
+        );
+        const fresh = customers.filter((c) => !existing.has(c.nameKey));
+        if (fresh.length > 0) {
+          await tx.customer.createMany({
+            data: fresh.map((c) => ({
+              nameKey: c.nameKey,
+              name: c.name,
+              phone: c.phone,
+              notes: c.notes,
+            })),
+          });
+        }
+      } else {
+        await tx.customer.createMany({
+          data: customers.map((c) => ({
+            nameKey: c.nameKey,
+            name: c.name,
+            phone: c.phone,
+            notes: c.notes,
+          })),
+        });
+      }
+
+      // ---- transactions (dedupe by id in merge mode) ----
+      let rows = transactions;
+      if (mode === "merge" && transactions.some((t) => t.id)) {
+        const ids = transactions
+          .map((t) => t.id)
+          .filter((x): x is string => Boolean(x));
+        const existing = new Set(
+          (
+            await tx.transaction.findMany({
+              where: { id: { in: ids } },
+              select: { id: true },
+            })
+          ).map((r) => r.id)
+        );
+        rows = transactions.filter((t) => !t.id || !existing.has(t.id));
+        skipped = transactions.length - rows.length;
+      }
+      if (rows.length > 0) {
+        await tx.transaction.createMany({
+          data: rows.map((t) => ({
+            ...(t.id ? { id: t.id } : {}),
+            nameKey: t.nameKey,
+            name: t.name,
+            amountPaise: t.amountPaise,
+            txnType: t.txnType,
+            rawText: t.rawText,
+            note: t.note,
+            reversed: t.reversed,
+            isReversal: t.isReversal,
+            createdAt: new Date(t.createdAt),
+          })),
+        });
+      }
+
+      // ---- recompute every imported customer's balance FROM the ledger ----
+      // (single aggregation pass — numbers in the backup are never trusted)
+      const keys = [...new Set(mode === "replace" ? customers.map((c) => c.nameKey) : [...known])];
+      const sums = await tx.transaction.groupBy({
+        by: ["nameKey", "txnType"],
+        where: { nameKey: { in: keys }, reversed: false, isReversal: false },
+        _sum: { amountPaise: true },
+      });
+      const ranges = await tx.transaction.groupBy({
+        by: ["nameKey"],
+        where: { nameKey: { in: keys }, reversed: false, isReversal: false },
+        _min: { createdAt: true },
+        _max: { createdAt: true },
+      });
+      const firstDues = await tx.transaction.groupBy({
+        by: ["nameKey"],
+        where: { nameKey: { in: keys }, txnType: "UDHAAR", reversed: false, isReversal: false },
+        _min: { createdAt: true },
+      });
+
+      const balanceOf = new Map<string, number>();
+      for (const s of sums) {
+        const delta = s.txnType === "UDHAAR" ? s._sum.amountPaise : -s._sum.amountPaise;
+        balanceOf.set(s.nameKey, (balanceOf.get(s.nameKey) ?? 0) + delta);
+      }
+      const lastOf = new Map(ranges.map((r) => [r.nameKey, r._max.createdAt]));
+      const dueOf = new Map(firstDues.map((r) => [r.nameKey, r._min.createdAt]));
+
+      for (const key of keys) {
+        const balance = balanceOf.get(key) ?? 0;
+        await tx.customer.update({
+          where: { nameKey: key },
+          data: {
+            balancePaise: balance,
+            lastTxnAt: lastOf.get(key) ?? null,
+            firstDueAt: balance > 0 ? (dueOf.get(key) ?? null) : null,
+          },
+        });
+      }
+
+      // A restore of real data means the ledger is no longer "demo".
+      // (tx-scoped — the global db client must not be touched while the
+      // SQLite transaction is open, it deadlocks the database file.)
+      await tx.settings.upsert({
+        where: { id: "singleton" },
+        create: { id: "singleton" },
+        update: {},
+      });
+      if (mode === "replace") {
+        await tx.settings.update({
+          where: { id: "singleton" },
+          data: { demoData: false },
+        });
+      }
+
+      await tx.auditEvent.create({
+        data: {
+          action: "import_backup",
+          entity: "settings",
+          entityId: "singleton",
+          data: JSON.stringify({
+            mode,
+            importedCustomers: customers.length,
+            importedTransactions: transactions.length - skipped,
+            skippedTransactions: skipped,
+            exportedAt,
+          }),
+        },
+      });
+
+      return { skipped };
+    },
+    { timeout: 30_000, maxWait: 10_000 }
+  );
+
+  return {
+    mode,
+    importedCustomers: customers.length,
+    importedTransactions: transactions.length - result.skipped,
+    skippedTransactions: result.skipped,
+    exportedAt,
   };
 }
 

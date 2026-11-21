@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, ShieldCheck, TriangleAlert, Download, Store } from "lucide-react";
 import type { SettingsPublic } from "@/lib/types";
 import { errOf, khataFetch, khataPost } from "../api";
+import { ActivityLogCard, RestoreBackupCard } from "../data-safety";
 
 export function SettingsTab({
   settings,
@@ -206,6 +207,7 @@ export function SettingsTab({
               Download full backup (JSON)
             </a>
           </Button>
+          <RestoreBackupCard refreshAll={refreshAll} />
         </div>
       </section>
 
@@ -261,6 +263,11 @@ export function SettingsTab({
             </AlertDialogContent>
           </AlertDialog>
         </div>
+      </section>
+
+      {/* activity log (audit trail) */}
+      <section aria-labelledby="activity-heading">
+        <ActivityLogCard />
       </section>
 
       <p className="text-xs text-[#5c6b62]">

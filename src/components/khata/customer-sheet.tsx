@@ -28,7 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, MessageCircle, Undo2 } from "lucide-react";
+import { Loader2, MessageCircle, ReceiptText, Undo2 } from "lucide-react";
 import { formatINR } from "@/lib/format";
 import type { CustomerPublic, TxnPublic } from "@/lib/types";
 import { errOf, khataFetch, khataPost } from "./api";
@@ -56,6 +56,7 @@ export function CustomerSheet({
   const [notes, setNotes] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
+  const [sendingStatement, setSendingStatement] = useState(false);
   const [reversing, setReversing] = useState<TxnPublic | null>(null);
   const [reversingBusy, setReversingBusy] = useState(false);
 
@@ -151,6 +152,36 @@ export function CustomerSheet({
       setSendingReminder(false);
     }
   }, [customer, toast, onMutated]);
+
+  /** WhatsApp-ready statement (last ledger lines + balance) — works even
+   *  for settled customers, so it doubles as a receipt. */
+  const sendStatement = useCallback(async () => {
+    if (!customer) return;
+    setSendingStatement(true);
+    try {
+      const result = await khataPost<{
+        ok: boolean;
+        statement?: { whatsappUrl: string; lines: number };
+      }>(`/api/customers/${encodeURIComponent(customer.nameKey)}/statement`, {});
+      if (result.status === 201 && result.data.statement) {
+        toast({
+          title: "Statement ready",
+          description: `${result.data.statement.lines} ledger line(s) — WhatsApp opened with the message.`,
+        });
+        window.open(result.data.statement.whatsappUrl, "_blank", "noopener,noreferrer");
+      } else {
+        toast({
+          title: "No statement sent",
+          description: errOf(result, "Could not build the statement."),
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      toast({ title: "No statement sent", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSendingStatement(false);
+    }
+  }, [customer, toast]);
 
   const confirmReverse = useCallback(async () => {
     if (!reversing) return;
@@ -269,20 +300,37 @@ export function CustomerSheet({
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-[#5c6b62] mb-2">
                   Quick actions
                 </h3>
-                <Button
-                  type="button"
-                  disabled={sendingReminder}
-                  onClick={sendReminder}
-                  className="bg-[#128c7e] text-white hover:bg-[#0e7263]"
-                  aria-label={`Send WhatsApp reminder to ${customer.name}`}
-                >
-                  {sendingReminder ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <MessageCircle className="size-4" aria-hidden="true" />
-                  )}
-                  WhatsApp reminder
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={sendingReminder}
+                    onClick={sendReminder}
+                    className="bg-[#128c7e] text-white hover:bg-[#0e7263]"
+                    aria-label={`Send WhatsApp reminder to ${customer.name}`}
+                  >
+                    {sendingReminder ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <MessageCircle className="size-4" aria-hidden="true" />
+                    )}
+                    WhatsApp reminder
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={sendingStatement}
+                    onClick={sendStatement}
+                    className="border-[#128c7e] text-[#128c7e] hover:bg-[#128c7e]/10"
+                    aria-label={`Send WhatsApp statement to ${customer.name}`}
+                  >
+                    {sendingStatement ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ReceiptText className="size-4" aria-hidden="true" />
+                    )}
+                    Send statement
+                  </Button>
+                </div>
               </section>
 
               {/* ledger history */}
