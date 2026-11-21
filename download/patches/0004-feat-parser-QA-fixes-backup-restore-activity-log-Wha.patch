@@ -1,0 +1,1941 @@
+From baa56d14b511ddb3c4054c07a33d094bc2b3551b Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Sat, 21 Nov 2026 18:18:39 +0000
+Subject: [PATCH 4/5] feat: parser QA fixes, backup restore, activity log,
+ WhatsApp statements, offline drafts, PWA
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- parser: fix 6 failing real-world patterns found by a 22-case QA battery
+  (gave/collected/mila/vasool as payment verbs; customer fallback scan for
+  lines that don't start with the name, e.g. 'Rs 120 udhaar Ramesh')
+- restore: POST /api/import (merge/replace) with row-by-row validation and
+  balances always recomputed from ledger lines; Settings UI with confirm
+  dialog; fixes 5s tx timeout + SQLite deadlock (tx-scoped settings upsert)
+- audit: GET /api/audit + append-only Activity log card in Settings
+- statements: POST /api/customers/[name]/statement — WhatsApp-ready receipt
+  built from real ledger lines; 'Send statement' in customer sheet
+- offline: honest offline banner + draft persistence in localStorage
+  (typed sentence and manual form survive reloads; no fake offline sync)
+- PWA: manifest, khata-themed SVG/PNG icons, theme color, apple-web-app
+
+Verified: parser battery 22/22, export->merge->replace roundtrip via curl,
+browser E2E (entry, restore dialog, statement wa.me link, offline banner,
+draft reload, mobile 390x844 layout, sticky footer), eslint clean
+---
+ db/custom.db                                  | Bin 65536 -> 65536 bytes
+ public/icon-192.png                           | Bin 0 -> 5543 bytes
+ public/icon-512.png                           | Bin 0 -> 19660 bytes
+ public/icon.svg                               |  26 ++
+ public/manifest.webmanifest                   |  14 +
+ scripts/parser-battery.ts                     |  60 +++
+ src/app/api/audit/route.ts                    |  21 +
+ .../api/customers/[name]/statement/route.ts   |  28 ++
+ src/app/api/import/route.ts                   |  42 ++
+ src/app/layout.tsx                            |  20 +-
+ src/components/khata/customer-sheet.tsx       |  78 +++-
+ src/components/khata/data-safety.tsx          | 372 +++++++++++++++++
+ src/components/khata/tabs/khata-tab.tsx       |  65 +++
+ src/components/khata/tabs/settings-tab.tsx    |   7 +
+ src/lib/khata.ts                              | 373 +++++++++++++++++-
+ src/lib/parser.ts                             |  58 ++-
+ 16 files changed, 1141 insertions(+), 23 deletions(-)
+ create mode 100644 public/icon-192.png
+ create mode 100644 public/icon-512.png
+ create mode 100644 public/icon.svg
+ create mode 100644 public/manifest.webmanifest
+ create mode 100644 scripts/parser-battery.ts
+ create mode 100644 src/app/api/audit/route.ts
+ create mode 100644 src/app/api/customers/[name]/statement/route.ts
+ create mode 100644 src/app/api/import/route.ts
+ create mode 100644 src/components/khata/data-safety.tsx
+
+diff --git a/db/custom.db b/db/custom.db
+index 691a15fc140fb02856ea731d8cb84b3886649ac1..55138feeb7b188d70032488034da8dec19e1542c 100644
+GIT binary patch
+delta 2143
+zcmb_d|4&<06o0R;4``u%C9{}@VM~o+6WIC+EiH3>b_^W~4%dfd^9Oyjucfr_y?&*o
+zW)xgvjApXs#yOMyu##-J1T=t&Kkf%Li~i!5f50V+zmCNH;Fh@Hxvwph(IpyvCwV#d
+ze(pKvbI-Z=+=T`0!h-fvJ2`*(;1D^#{;u%cvu~1mvza0$X!!hNBfMXVW{7JqqwlP}
+zt%0sT$<lV9>mmMceKAa-HtS0|-t;+);g8<7z6PVK>gX!^(mKTOrYq{`v+{q#_KeBc
+zyjCllt)`EgHM{|BALq3MK|My3zE_Q)Y*;Ls_QOO|6G5Ykr!DAv-(ieTp+9_Qu+oA~
+zaRMls6|}|$ilB^}&6@UZ)gmb6lF499aXB1LQHjd#gxBLx;tn<dI|@WILdWR1|LoZC
+z8$2G^W}>!;Fe};yT);DsUFI8FIB;g+cAbU7f*YKru`?;8%sN>`uIA^!hZE?iuk%IN
+z?Fg+}ws-BZ#59uF(&KjL!^vD06?|@U5`6XpqF^MMP6-KDNQQkLQ;|MEB#ej|R+gO}
+zCo*&X9VCX4nOr;=oN{N;?c;;!2G^#dPOyt&R490r0y`(8pShDp=4h=z($5;v*y#@1
+zKoDdE2|f$m0@?`9G~EnZH~PzGDe6Hp;9MpWv)-)3!K#Gv+3@tV97*U1g4n8}X+Tv{
+zp^%hT1h3cx=r2#LLt_WUkt$j*u?=Ok2t@>VU-sx)<9!*_)}s5eNIi+}$)x5W#p$ZF
+zoTevJxiPM{8I2mFrbTQK^~+cwl^^LhmkZyL?BXkQ6W7&YeV?IK7gKXH1;|PP7b7Ie
+zv$IM}h)M}1m3e1M2*$Drv|c<=l$4NYAGD{$L|h1p_8xnAi5MEnrZb8prqcGozTH_q
+zCCF(Zn29Pf0PY@pIu=bN#L(V(M~_|1<49u2p8@Yqhtu85vb|20XFY>#|6srCNdJK6
+zoc;U&KJoNdaD9GNxi{}{hl9k<VeYw@H|}!vWuD3%NJjoGb6{APIqc{kGABzXfcX+I
+zZ{ErJ;z_Dpg32~Ro>UHs7{S|+BiWP`Pxk$<+xYJVAWMg!nXbZ38{pXIxy9jf0ib!|
+zeiO#b<N4{Z6c%&n$b9E$-M03gJy<y{P;A`N;2dT0GC!BVXRFfcU`~*ftehDaqG^~P
+zaG`7Shh7L|Z_bg8TxW;%d^t2+IWL6H;LuX8PYO=QJ!qx)Ry%JhK}R4+<{rV^V^%<7
+zAgx$7TWybwsCDUFap!*3JN`77=c<=u-vO(+xpnGBf$cHXwq9<kH@8h~8T<HeTzbq<
+zyy^PJ_1~?!28z<bn??}m{_QTqMW#kzAB{|r(VA%zcXzlPL$7}TO_I1n;-`ZwJ@Vfn
+zpj8szkZ1g3!+}#|>0#JFK+7a<R8~A#`-H%0`gCW-18$wb&GJIU=Y7irf!kxcVu7EW
+z#+sN~culXM)t{n<ubCPFZsW|Po}$TJS{HU1<#(w_WU0zx3e-yYNwQRpJX(I|8Y|8q
+z+~yCzoiG{hGIyCDL2hAzc$XP;YrE53Sq6Oq7qDAx8B5yg?A9tSjahYhQ=_A39jI_t
+F{swIRoo@gD
+
+delta 2167
+zcmbVNPi)&%9JZT3O|rIWwslg}l{l`@5UY@rw#nM1OS80Evyv*bDQGaXI*k*X#CBrG
+zN!l{fT^ItiKRh9gOIde8mByd8Cr%)7;)Iak%wghy5aWO}i9=O>&ra4v7=h4}?C1A;
+z@B6;@z2EP7bJM!HX}vQ@uG~ExCs%e?*k`ON|N7TR^Z6MnrEob;Q7Nv<NrIH8s)8z1
+z)ECI@Kcc$?xqWys@dG?VFJ0FAzo1jTh%-Ka8@}L)Uh`dsuUq=pE%cc$?vBsDt$*D#
+zo_o~Een(H-X#1Z2?PCqq*%S5qyS$@>(-F0;inVen94dqurT_u2w<93&nKHu!SXq!l
+zd?s8Kh4s<JSaNo0Zjlu^l|S*$^2}T;wwPokjV)4ImS<Uo;-reQrUT3QECcH~ynaoq
+zuFDm+Q3qwQd+LqnT{_)hQg%3-I!vb5JLyufE6Le~^di`$sK6-aCMgs0wm4N$SV?79
+zD}pRhAgWO=ne9rKYZd^ta0Ucn={LM_I0(Zuv&o%eO}%Mga|{a>9WBG3f)>Rf4~B)Y
+zVVTf+ZY)&e{{v_fb2|QnAi8)gbeTB9%!wJm9K)ESf}PcPalMWPrzY)()5EE>9esX2
+zZB5vEqNqD^32j|Cj#eTU&|`Ri5t%_V(c{QIwS;!yU6`8vVEUw^??<EUd#Eq_(8hwZ
+zVRmpXf*^bU(N-rx5WnkDvn@Ly`n?hD5N~Mj9<oG9JzA==LD(94Z=u&_$D_y-@!D*9
+z?<(}HdhcPx8?m&lnb2U3i0!CrIi8pDrLNPKsI!SUp+dBPquH#e%IpNUmvT{kt_ST6
+zO6gtK{)6>z$OfL-s*Md=X=Y|3OHa}|qM0}J2)(MQ6<OpIm}b-xjIpAuNtF~Us2n{x
+z4wW-P%ZiW}B(|7dE5R6Tq!fK!&&ppRE2+lWA@4OKBjxdNoII;oQ7Jse2w@?km9lJw
+zyVhcBy^WmOpi8_gadDoN@*D`RC>l3HOLB!%JH~W6&j94sUNkTqy)pZ=0#wG$1TvVg
+z5M%>2md&Ey-twcXZ$eIV_|hV7-)^NYb#BYlft;+Y9*GmwR&CRhIku>BSX=B~9g^*d
+zuI-Yct$0EV7Ql>ix*2RBs1=zY)|M=pCESMTdHlOT^lIa|Gt=<{pr6p`6HWS@2sd9~
+z9J4ELl+P72bpf+4l!_(^{r}hlK?c)5J3YL-Ms`R2L%!<<IaEa$$g7x~8yCyrOs<AL
+zX}mlbpZ^%Dk|5oW2=^nmr@cWf|A}kag$8e@8ZhZYBY90y$_CMz9)&9q7fZ+aTOoQy
+zkAlyCI{^zs&l^z_hgxNLs$4SL!`__(w<SKmwRit#AKV{yn}sC1tmyGqXY8N4aohJZ
+z?;qQ}zh%h}Sp7CKJ-d{qmJ$n>=17m#Ya@-MH!gJS!$(IW@I%5k(#@k0xJ&UZq_vF<
+zr@GzN0UH@hCenZczgqP0JE0r7^#%^s+##36MjkO_^yJi`Ux98D^F`bRu;yIA+5h&Z
+yi~YSj?zRSScim{`&>sR7Aq?pmz|No5A?w&?N{2kao(|}c%Uw>3%?VvN=)VB8*uKF4
+
+diff --git a/public/icon-192.png b/public/icon-192.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..922b66f897cc8e5d700294572057fcdd1fe7829c
+GIT binary patch
+literal 5543
+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
+X7kji6D)BOK<rP?(+n7B$<{tO|`b2JX
+
+literal 0
+HcmV?d00001
+
+diff --git a/public/icon-512.png b/public/icon-512.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..0b187ac0f03613da4b2809777843d2d5e4861f99
+GIT binary patch
+literal 19660
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/public/icon.svg b/public/icon.svg
+new file mode 100644
+index 0000000..ba33e7b
+--- /dev/null
++++ b/public/icon.svg
+@@ -0,0 +1,26 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
++  <defs>
++    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
++      <stop offset="0" stop-color="#0f5c4c"/>
++      <stop offset="1" stop-color="#0a3f35"/>
++    </linearGradient>
++  </defs>
++  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
++  <!-- khata page -->
++  <rect x="118" y="98" width="276" height="316" rx="26" fill="#f8f3ea"/>
++  <!-- binding spine -->
++  <rect x="118" y="98" width="38" height="316" rx="19" fill="#dccdb4"/>
++  <!-- ledger rule lines -->
++  <rect x="190" y="152" width="152" height="17" rx="8.5" fill="#c9bba4"/>
++  <rect x="190" y="200" width="152" height="17" rx="8.5" fill="#c9bba4"/>
++  <rect x="190" y="248" width="108" height="17" rx="8.5" fill="#9b2c2c"/>
++  <!-- rupee coin -->
++  <circle cx="256" cy="356" r="60" fill="#0f5c4c"/>
++  <!-- rupee sign drawn as strokes (no font dependency) -->
++  <g stroke="#f8f3ea" stroke-width="15" stroke-linecap="round" fill="none">
++    <path d="M 234 328 L 234 388"/>
++    <path d="M 234 328 L 288 328"/>
++    <path d="M 234 352 L 288 352"/>
++    <path d="M 240 352 L 284 388"/>
++  </g>
++</svg>
+diff --git a/public/manifest.webmanifest b/public/manifest.webmanifest
+new file mode 100644
+index 0000000..b2e1b47
+--- /dev/null
++++ b/public/manifest.webmanifest
+@@ -0,0 +1,14 @@
++{
++  "name": "Udhaar Khata — Kirana Credit Ledger",
++  "short_name": "Udhaar Khata",
++  "description": "Type or speak a line the way you would write it in a paper khata — track customer udhaar, payments and WhatsApp reminders.",
++  "start_url": "/",
++  "display": "standalone",
++  "background_color": "#f3eadb",
++  "theme_color": "#0f5c4c",
++  "icons": [
++    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
++    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
++    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
++  ]
++}
+diff --git a/scripts/parser-battery.ts b/scripts/parser-battery.ts
+new file mode 100644
+index 0000000..5eaf7d7
+--- /dev/null
++++ b/scripts/parser-battery.ts
+@@ -0,0 +1,60 @@
++/**
++ * Parser stress battery — run with: bun run scripts/parser-battery.ts
++ * Mirrors real sentences shopkeepers say/type (from khata app reviews).
++ * Temporary QA script — safe to delete.
++ */
++import { parse } from "../src/lib/parser";
++
++const CASES: { text: string; expectCustomer?: string; expectAmount?: number; expectType?: string }[] = [
++  // --- core preserved cases ---
++  { text: "Ramesh took 2 kg rice for 120 rupees", expectCustomer: "Ramesh", expectAmount: 120, expectType: "UDHAAR" },
++  { text: "Ramesh paid 50", expectCustomer: "Ramesh", expectAmount: 50, expectType: "PAYMENT" },
++  { text: "Amit ne 200 ka udhaar liya", expectCustomer: "Amit", expectAmount: 200, expectType: "UDHAAR" },
++  { text: "Sita diya 50", expectCustomer: "Sita", expectAmount: 50, expectType: "PAYMENT" },
++  // --- realistic variants that should work ---
++  { text: "Ramesh took rice 120", expectCustomer: "Ramesh", expectAmount: 120, expectType: "UDHAAR" },
++  { text: "Ramesh 2 kg chawal 120", expectCustomer: "Ramesh", expectAmount: 120 },
++  { text: "Ramesh paid 50/-", expectCustomer: "Ramesh", expectAmount: 50, expectType: "PAYMENT" },
++  { text: "Sita ji ne 200 jama kiye", expectCustomer: "Sita", expectAmount: 200, expectType: "PAYMENT" },
++  { text: "Ramesh gave 50", expectCustomer: "Ramesh", expectAmount: 50, expectType: "PAYMENT" },
++  { text: "Ramesh returned 2 kg rice worth 100", expectCustomer: "Ramesh", expectAmount: 100, expectType: "PAYMENT" },
++  { text: "Amit ka udhaar 250", expectCustomer: "Amit", expectAmount: 250, expectType: "UDHAAR" },
++  { text: "Ramesh paid 1,200 rupees", expectCustomer: "Ramesh", expectAmount: 1200, expectType: "PAYMENT" },
++  { text: "₹120 udhaar Ramesh", expectCustomer: "Ramesh", expectAmount: 120, expectType: "UDHAAR" },
++  { text: "udhaar 200 Ramesh", expectCustomer: "Ramesh", expectAmount: 200, expectType: "UDHAAR" },
++  { text: "liya Ramesh ne 100", expectCustomer: "Ramesh", expectAmount: 100, expectType: "UDHAAR" },
++  { text: "collected 50 from Ramesh", expectCustomer: "Ramesh", expectAmount: 50, expectType: "PAYMENT" },
++  { text: "Ramesh se 50 mila", expectCustomer: "Ramesh", expectAmount: 50, expectType: "PAYMENT" },
++  { text: "Ramesh ne 50 diye", expectCustomer: "Ramesh", expectAmount: 50, expectType: "PAYMENT" },
++  { text: "Ramesh took 120 ki cheez", expectCustomer: "Ramesh", expectAmount: 120, expectType: "UDHAAR" },
++  { text: "Ramesh ko 500 ka saman diya", expectCustomer: "Ramesh", expectAmount: 500, expectType: "PAYMENT" },
++  { text: "Ramesh settled his udhaar of 300", expectCustomer: "Ramesh", expectAmount: 300, expectType: "PAYMENT" },
++  // --- should still FAIL gracefully (no amount) ---
++  { text: "Ramesh took 1.5 kg sugar" },
++];
++
++let pass = 0;
++let fail = 0;
++for (const c of CASES) {
++  const r = parse(c.text);
++  const problems: string[] = [];
++  if (c.expectCustomer !== undefined) {
++    if (!r.ok) problems.push(`parse failed: ${r.error}`);
++    else {
++      if (r.customer !== c.expectCustomer) problems.push(`customer "${r.customer}" != "${c.expectCustomer}"`);
++      if (c.expectAmount !== undefined && r.amount !== c.expectAmount) problems.push(`amount ${r.amount} != ${c.expectAmount}`);
++      if (c.expectType !== undefined && r.txnType !== c.expectType) problems.push(`type ${r.txnType} != ${c.expectType}`);
++    }
++  } else {
++    if (r.ok) problems.push(`expected graceful failure but parsed as ${r.customer}/${r.amount}`);
++    else if (!r.customer) problems.push("failure message should still include the name if found");
++  }
++  if (problems.length === 0) {
++    pass++;
++    console.log(`PASS  "${c.text}"  ->  ${r.customer ?? "-"} / ${r.amount ?? "-"} / ${r.txnType ?? "-"}`);
++  } else {
++    fail++;
++    console.log(`FAIL  "${c.text}"\n      ${problems.join(" | ")}   (got ${r.customer ?? "-"} / ${r.amount ?? "-"} / ${r.txnType ?? "-"})`);
++  }
++}
++console.log(`\n${pass} passed, ${fail} failed of ${CASES.length}`);
+diff --git a/src/app/api/audit/route.ts b/src/app/api/audit/route.ts
+new file mode 100644
+index 0000000..8ba3e86
+--- /dev/null
++++ b/src/app/api/audit/route.ts
+@@ -0,0 +1,21 @@
++import { NextRequest, NextResponse } from "next/server";
++import { listAuditEvents } from "@/lib/khata";
++
++/**
++ * GET /api/audit?limit=50
++ * Read-only activity log — the append-only audit trail that backs the
++ * "Activity log" card in Settings. No mutations here by design: the trail
++ * must stay immutable.
++ */
++export async function GET(req: NextRequest) {
++  try {
++    const raw = req.nextUrl.searchParams.get("limit");
++    const parsed = raw ? Number.parseInt(raw, 10) : 50;
++    const limit = Number.isFinite(parsed) ? parsed : 50;
++    const events = await listAuditEvents(limit);
++    return NextResponse.json({ ok: true, events });
++  } catch (err) {
++    const message = err instanceof Error ? err.message : "Could not load the activity log.";
++    return NextResponse.json({ ok: false, error: message }, { status: 500 });
++  }
++}
+diff --git a/src/app/api/customers/[name]/statement/route.ts b/src/app/api/customers/[name]/statement/route.ts
+new file mode 100644
+index 0000000..00d5d76
+--- /dev/null
++++ b/src/app/api/customers/[name]/statement/route.ts
+@@ -0,0 +1,28 @@
++import { NextRequest, NextResponse } from "next/server";
++import { customerStatement } from "@/lib/khata";
++
++/**
++ * POST /api/customers/[name]/statement
++ * Build a WhatsApp-ready statement (last ledger lines + balance) for one
++ * customer. Works for settled customers too — it doubles as a receipt.
++ */
++export async function POST(
++  _req: NextRequest,
++  ctx: { params: Promise<{ name: string }> }
++) {
++  try {
++    const { name } = await ctx.params;
++    const decoded = decodeURIComponent(name);
++    const result = await customerStatement(decoded);
++    if (!result) {
++      return NextResponse.json(
++        { ok: false, error: `No customer named ${decoded}.` },
++        { status: 404 }
++      );
++    }
++    return NextResponse.json({ ok: true, statement: result }, { status: 201 });
++  } catch (err) {
++    const message = err instanceof Error ? err.message : "Could not build the statement.";
++    return NextResponse.json({ ok: false, error: message }, { status: 500 });
++  }
++}
+diff --git a/src/app/api/import/route.ts b/src/app/api/import/route.ts
+new file mode 100644
+index 0000000..c222a2a
+--- /dev/null
++++ b/src/app/api/import/route.ts
+@@ -0,0 +1,42 @@
++import { NextRequest, NextResponse } from "next/server";
++import { restoreBackup } from "@/lib/khata";
++
++/**
++ * POST /api/import
++ * Restore a ledger from a backup produced by /api/export/backup.json.
++ * Body: { mode: "replace" | "merge", backup: <parsed backup object> }
++ *
++ * - "replace": wipe the current ledger and rebuild from the backup.
++ * - "merge":   add only new customers/transactions; never clobber edits.
++ *
++ * Balances are recomputed from the imported ledger lines server-side — the
++ * numbers in the file are never trusted.
++ */
++export async function POST(req: NextRequest) {
++  try {
++    const body = (await req.json().catch(() => null)) as {
++      mode?: string;
++      backup?: unknown;
++    } | null;
++
++    if (!body || (body.mode !== "replace" && body.mode !== "merge")) {
++      return NextResponse.json(
++        { ok: false, error: 'Choose a restore mode: "merge" or "replace".' },
++        { status: 400 }
++      );
++    }
++    if (!body.backup) {
++      return NextResponse.json(
++        { ok: false, error: "No backup content was provided." },
++        { status: 400 }
++      );
++    }
++
++    const result = await restoreBackup(body.backup, body.mode);
++    return NextResponse.json({ ok: true, result }, { status: 201 });
++  } catch (err) {
++    const message =
++      err instanceof Error ? err.message : "The backup could not be restored.";
++    return NextResponse.json({ ok: false, error: message }, { status: 400 });
++  }
++}
+diff --git a/src/app/layout.tsx b/src/app/layout.tsx
+index af6867c..d1a542c 100644
+--- a/src/app/layout.tsx
++++ b/src/app/layout.tsx
+@@ -1,4 +1,4 @@
+-import type { Metadata } from "next";
++import type { Metadata, Viewport } from "next";
+ import { Fraunces, Source_Sans_3 } from "next/font/google";
+ import "./globals.css";
+ import { Toaster } from "@/components/ui/toaster";
+@@ -20,9 +20,25 @@ export const metadata: Metadata = {
+   description:
+     "Type or speak a line the way you would write it in a paper khata. The shop ledger updates at once, and overdue dues get a WhatsApp reminder link.",
+   keywords: ["khata", "udhaar", "kirana", "credit ledger", "digital khata"],
++  manifest: "/manifest.webmanifest",
+   icons: {
+-    icon: "/logo.svg",
++    icon: [
++      { url: "/icon.svg", type: "image/svg+xml" },
++      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
++    ],
++    apple: "/icon-192.png",
+   },
++  appleWebApp: {
++    capable: true,
++    title: "Udhaar Khata",
++    statusBarStyle: "black-translucent",
++  },
++};
++
++export const viewport: Viewport = {
++  themeColor: "#0f5c4c",
++  width: "device-width",
++  initialScale: 1,
+ };
+ 
+ export default function RootLayout({
+diff --git a/src/components/khata/customer-sheet.tsx b/src/components/khata/customer-sheet.tsx
+index 2beabc3..2ab3892 100644
+--- a/src/components/khata/customer-sheet.tsx
++++ b/src/components/khata/customer-sheet.tsx
+@@ -28,7 +28,7 @@ import {
+   AlertDialogTitle,
+ } from "@/components/ui/alert-dialog";
+ import { useToast } from "@/hooks/use-toast";
+-import { Loader2, MessageCircle, Undo2 } from "lucide-react";
++import { Loader2, MessageCircle, ReceiptText, Undo2 } from "lucide-react";
+ import { formatINR } from "@/lib/format";
+ import type { CustomerPublic, TxnPublic } from "@/lib/types";
+ import { errOf, khataFetch, khataPost } from "./api";
+@@ -56,6 +56,7 @@ export function CustomerSheet({
+   const [notes, setNotes] = useState("");
+   const [savingProfile, setSavingProfile] = useState(false);
+   const [sendingReminder, setSendingReminder] = useState(false);
++  const [sendingStatement, setSendingStatement] = useState(false);
+   const [reversing, setReversing] = useState<TxnPublic | null>(null);
+   const [reversingBusy, setReversingBusy] = useState(false);
+ 
+@@ -152,6 +153,36 @@ export function CustomerSheet({
+     }
+   }, [customer, toast, onMutated]);
+ 
++  /** WhatsApp-ready statement (last ledger lines + balance) — works even
++   *  for settled customers, so it doubles as a receipt. */
++  const sendStatement = useCallback(async () => {
++    if (!customer) return;
++    setSendingStatement(true);
++    try {
++      const result = await khataPost<{
++        ok: boolean;
++        statement?: { whatsappUrl: string; lines: number };
++      }>(`/api/customers/${encodeURIComponent(customer.nameKey)}/statement`, {});
++      if (result.status === 201 && result.data.statement) {
++        toast({
++          title: "Statement ready",
++          description: `${result.data.statement.lines} ledger line(s) — WhatsApp opened with the message.`,
++        });
++        window.open(result.data.statement.whatsappUrl, "_blank", "noopener,noreferrer");
++      } else {
++        toast({
++          title: "No statement sent",
++          description: errOf(result, "Could not build the statement."),
++          variant: "destructive",
++        });
++      }
++    } catch (e) {
++      toast({ title: "No statement sent", description: (e as Error).message, variant: "destructive" });
++    } finally {
++      setSendingStatement(false);
++    }
++  }, [customer, toast]);
++
+   const confirmReverse = useCallback(async () => {
+     if (!reversing) return;
+     setReversingBusy(true);
+@@ -269,20 +300,37 @@ export function CustomerSheet({
+                 <h3 className="text-xs font-semibold uppercase tracking-wide text-[#5c6b62] mb-2">
+                   Quick actions
+                 </h3>
+-                <Button
+-                  type="button"
+-                  disabled={sendingReminder}
+-                  onClick={sendReminder}
+-                  className="bg-[#128c7e] text-white hover:bg-[#0e7263]"
+-                  aria-label={`Send WhatsApp reminder to ${customer.name}`}
+-                >
+-                  {sendingReminder ? (
+-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+-                  ) : (
+-                    <MessageCircle className="size-4" aria-hidden="true" />
+-                  )}
+-                  WhatsApp reminder
+-                </Button>
++                <div className="flex flex-wrap gap-2">
++                  <Button
++                    type="button"
++                    disabled={sendingReminder}
++                    onClick={sendReminder}
++                    className="bg-[#128c7e] text-white hover:bg-[#0e7263]"
++                    aria-label={`Send WhatsApp reminder to ${customer.name}`}
++                  >
++                    {sendingReminder ? (
++                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
++                    ) : (
++                      <MessageCircle className="size-4" aria-hidden="true" />
++                    )}
++                    WhatsApp reminder
++                  </Button>
++                  <Button
++                    type="button"
++                    variant="outline"
++                    disabled={sendingStatement}
++                    onClick={sendStatement}
++                    className="border-[#128c7e] text-[#128c7e] hover:bg-[#128c7e]/10"
++                    aria-label={`Send WhatsApp statement to ${customer.name}`}
++                  >
++                    {sendingStatement ? (
++                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
++                    ) : (
++                      <ReceiptText className="size-4" aria-hidden="true" />
++                    )}
++                    Send statement
++                  </Button>
++                </div>
+               </section>
+ 
+               {/* ledger history */}
+diff --git a/src/components/khata/data-safety.tsx b/src/components/khata/data-safety.tsx
+new file mode 100644
+index 0000000..2eafe73
+--- /dev/null
++++ b/src/components/khata/data-safety.tsx
+@@ -0,0 +1,372 @@
++"use client";
++
++/**
++ * Data-safety cards for the Settings tab:
++ *  - RestoreBackupCard: upload a backup JSON and restore it (merge or replace)
++ *  - ActivityLogCard: read-only view of the append-only audit trail
++ */
++
++import { useCallback, useEffect, useRef, useState } from "react";
++import { Button } from "@/components/ui/button";
++import {
++  AlertDialog,
++  AlertDialogAction,
++  AlertDialogCancel,
++  AlertDialogContent,
++  AlertDialogDescription,
++  AlertDialogFooter,
++  AlertDialogHeader,
++  AlertDialogTitle,
++} from "@/components/ui/alert-dialog";
++import { useToast } from "@/hooks/use-toast";
++import {
++  FilePlus2,
++  History,
++  Loader2,
++  RotateCcw,
++  Store,
++  Undo2,
++  Upload,
++  UserPen,
++  FileUp,
++} from "lucide-react";
++import { formatINR } from "@/lib/format";
++import type { AuditPublic } from "@/lib/types";
++import { errOf, khataFetch, khataPost, relTime } from "./api";
++
++/* ==================================================================== */
++/*  Restore from backup                                                 */
++/* ==================================================================== */
++
++interface PendingRestore {
++  backup: Record<string, unknown>;
++  customers: number;
++  transactions: number;
++  exportedAt: string | null;
++}
++
++export function RestoreBackupCard({ refreshAll }: { refreshAll: () => Promise<void> }) {
++  const { toast } = useToast();
++  const fileRef = useRef<HTMLInputElement>(null);
++  const [pending, setPending] = useState<PendingRestore | null>(null);
++  const [busyMode, setBusyMode] = useState<"merge" | "replace" | null>(null);
++
++  const onFile = useCallback(async (file: File) => {
++    try {
++      const text = await file.text();
++      const parsed = JSON.parse(text) as Record<string, unknown>;
++      if (parsed?.format !== "udhaar-khata-backup" || !Array.isArray(parsed.customers)) {
++        toast({
++          title: "Not a khata backup",
++          description:
++            "Pick a JSON file produced by 'Full backup (JSON)' on the Reports or Settings tab.",
++          variant: "destructive",
++        });
++        return;
++      }
++      const backupCustomers = Array.isArray(parsed.customers) ? parsed.customers.length : 0;
++      const backupTransactions = Array.isArray(parsed.transactions)
++        ? parsed.transactions.length
++        : 0;
++      if (backupCustomers === 0 && backupTransactions === 0) {
++        toast({
++          title: "Empty backup",
++          description: "This backup has no customers or transactions to restore.",
++          variant: "destructive",
++        });
++        return;
++      }
++      setPending({
++        backup: parsed,
++        customers: backupCustomers,
++        transactions: backupTransactions,
++        exportedAt:
++          typeof parsed.exportedAt === "string"
++            ? new Date(parsed.exportedAt).toLocaleString("en-IN")
++            : null,
++      });
++    } catch {
++      toast({
++        title: "Could not read the file",
++        description: "Make sure it is the exported backup JSON file.",
++        variant: "destructive",
++      });
++    }
++  }, [toast]);
++
++  const restore = useCallback(
++    async (mode: "merge" | "replace") => {
++      if (!pending) return;
++      setBusyMode(mode);
++      try {
++        const result = await khataPost<{
++          ok: boolean;
++          error?: string;
++          result?: { importedCustomers: number; importedTransactions: number; skippedTransactions: number };
++        }>("/api/import", { mode, backup: pending.backup });
++        if (!result.ok || !result.data.result) {
++          toast({ title: "Restore failed", description: errOf(result), variant: "destructive" });
++          return;
++        }
++        const r = result.data.result;
++        toast({
++          title: mode === "replace" ? "Ledger replaced from backup" : "Backup merged",
++          description: `${r.importedTransactions} transaction(s) imported${
++            r.skippedTransactions > 0 ? `, ${r.skippedTransactions} duplicate(s) skipped` : ""
++          }. Balances were recomputed from the ledger.`,
++        });
++        setPending(null);
++        await refreshAll();
++      } catch (e) {
++        toast({ title: "Restore failed", description: (e as Error).message, variant: "destructive" });
++      } finally {
++        setBusyMode(null);
++      }
++    },
++    [pending, toast, refreshAll]
++  );
++
++  return (
++    <div className="mt-3 rounded-xl border border-[#e2d5c0] bg-white/60 p-3">
++      <p className="text-sm font-semibold text-[#1c261f]">Restore from a backup</p>
++      <p className="mt-1 text-xs text-[#5c6b62]">
++        Merge adds what is missing (never overwrites your edits). Replace wipes the
++        current ledger and rebuilds it from the file. Balances are always recomputed
++        from the ledger lines in the file.
++      </p>
++      <input
++        ref={fileRef}
++        type="file"
++        accept="application/json,.json"
++        className="sr-only"
++        aria-label="Choose a backup JSON file to restore"
++        onChange={(e) => {
++          const f = e.target.files?.[0];
++          if (f) void onFile(f);
++          e.target.value = "";
++        }}
++      />
++      <Button
++        type="button"
++        variant="outline"
++        className="mt-2 border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10"
++        onClick={() => fileRef.current?.click()}
++      >
++        <Upload className="size-4" aria-hidden="true" />
++        Choose backup file
++      </Button>
++
++      <AlertDialog
++        open={pending !== null}
++        onOpenChange={(open) => {
++          if (!open) setPending(null);
++        }}
++      >
++        <AlertDialogContent className="khata-card max-w-md">
++          <AlertDialogHeader>
++            <AlertDialogTitle className="font-serif-khata text-[#1c261f]">
++              Restore this backup?
++            </AlertDialogTitle>
++            <AlertDialogDescription asChild>
++              <div className="space-y-2 text-[#5c6b62]">
++                <p>
++                  {pending?.customers ?? 0} customer(s) and {pending?.transactions ?? 0}
++                  {" "}transaction(s){pending?.exportedAt ? ` · exported ${pending.exportedAt}` : ""}.
++                </p>
++                <p>
++                  <strong>Merge</strong> keeps everything currently in the ledger and adds
++                  only new lines. <strong>Replace</strong> erases the current ledger first —
++                  download a fresh backup if you are not sure.
++                </p>
++              </div>
++            </AlertDialogDescription>
++          </AlertDialogHeader>
++          <AlertDialogFooter className="flex-wrap gap-2">
++            <AlertDialogCancel className="border-[#e2d5c0] text-[#5c6b62]">
++              Cancel
++            </AlertDialogCancel>
++            <Button
++              type="button"
++              variant="outline"
++              disabled={busyMode !== null}
++              className="border-[#0f5c4c] text-[#0f5c4c] hover:bg-[#0f5c4c]/10"
++              onClick={() => void restore("merge")}
++            >
++              {busyMode === "merge" && (
++                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
++              )}
++              <FileUp className="size-4" aria-hidden="true" />
++              Merge into ledger
++            </Button>
++            <AlertDialogAction
++              className="bg-[#9b2c2c] text-white hover:bg-[#7a231f]"
++              disabled={busyMode !== null}
++              onClick={(e) => {
++                e.preventDefault();
++                void restore("replace");
++              }}
++            >
++              {busyMode === "replace" && (
++                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
++              )}
++              Replace everything
++            </AlertDialogAction>
++          </AlertDialogFooter>
++        </AlertDialogContent>
++      </AlertDialog>
++    </div>
++  );
++}
++
++/* ==================================================================== */
++/*  Activity log (audit trail)                                          */
++/* ==================================================================== */
++
++const ACTION_META: Record<
++  string,
++  { label: string; Icon: typeof History; className: string }
++> = {
++  transaction_create: { label: "Entry recorded", Icon: FilePlus2, className: "bg-[#d8e8e1] text-[#0f5c4c]" },
++  transaction_reverse: { label: "Entry reversed", Icon: Undo2, className: "bg-[#f6d9d9] text-[#9b2c2c]" },
++  update_customer: { label: "Customer updated", Icon: UserPen, className: "bg-[#efe4d2] text-[#5c6b62]" },
++  settings_update: { label: "Settings changed", Icon: Store, className: "bg-[#efe4d2] text-[#5c6b62]" },
++  demo_reset: { label: "Ledger reset to demo", Icon: RotateCcw, className: "bg-[#fde8d0] text-[#7a4210]" },
++  import_backup: { label: "Backup restored", Icon: Upload, className: "bg-[#fde8d0] text-[#7a4210]" },
++};
++
++function describeEvent(action: string, raw: string): string {
++  let d: Record<string, unknown> = {};
++  try {
++    d = JSON.parse(raw) as Record<string, unknown>;
++  } catch {
++    return "";
++  }
++  const rupees = (p: unknown) =>
++    typeof p === "number" ? formatINR(p) : "";
++  switch (action) {
++    case "transaction_create": {
++      const type = d.txnType === "PAYMENT" ? "payment" : "udhaar";
++      const forced = d.forced === true ? " (saved after duplicate warning)" : "";
++      return `${String(d.customer ?? "")} · ${rupees(d.amountPaise)} ${type}${forced}`;
++    }
++    case "transaction_reverse":
++      return `${String(d.customer ?? "")} · ${rupees(d.amountPaise)} ${String(
++        d.originalType ?? ""
++      ).toLowerCase()} voided`;
++    case "import_backup":
++      return `${String(d.mode ?? "")}: ${String(d.importedTransactions ?? 0)} transaction(s)${
++        Number(d.skippedTransactions ?? 0) > 0
++          ? `, ${String(d.skippedTransactions)} duplicate(s) skipped`
++          : ""
++      }`;
++    case "settings_update": {
++      const parts: string[] = [];
++      if (typeof d.shopName === "string") parts.push(`shop "${d.shopName}"`);
++      if (typeof d.overdueDays === "number") parts.push(`overdue ${d.overdueDays}d`);
++      if (typeof d.reminderTemplate === "string") parts.push("reminder template");
++      if (d.demoData === false) parts.push("demo flag off");
++      return parts.join(" · ");
++    }
++    case "demo_reset":
++      return `${String(d.customers ?? 0)} customer(s), ${String(d.transactions ?? 0)} entry(ies) seeded`;
++    default:
++      return "";
++  }
++}
++
++export function ActivityLogCard() {
++  const [events, setEvents] = useState<AuditPublic[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState("");
++
++  useEffect(() => {
++    const load = async () => {
++      setLoading(true);
++      setError("");
++      try {
++        const result = await khataFetch<{ ok: boolean; error?: string; events?: AuditPublic[] }>(
++          "/api/audit?limit=50"
++        );
++        if (!result.ok) {
++          setError(errOf(result, "Could not load the activity log."));
++          return;
++        }
++        setEvents(result.data.events ?? []);
++      } catch (e) {
++        setError((e as Error).message);
++      } finally {
++        setLoading(false);
++      }
++    };
++    void load();
++  }, []);
++
++  return (
++    <div className="khata-card rounded-2xl p-4 sm:p-5">
++      <h2 className="font-serif-khata text-lg font-bold text-[#1c261f] flex items-center gap-2">
++        <History className="size-5 text-[#0f5c4c]" aria-hidden="true" />
++        Activity log
++      </h2>
++      <p className="mt-2 text-sm text-[#5c6b62]">
++        Append-only audit trail — entries, reversals, restores and settings changes.
++        Nothing here can be edited or deleted.
++      </p>
++
++      {error ? (
++        <p className="mt-3 text-sm font-medium text-[#9b2c2c]" role="alert">
++          {error}
++        </p>
++      ) : loading ? (
++        <div className="mt-3 space-y-2">
++          {[0, 1, 2].map((i) => (
++            <div key={i} className="h-9 animate-pulse rounded-lg bg-[#efe4d2]/70" />
++          ))}
++        </div>
++      ) : events.length === 0 ? (
++        <p className="mt-3 text-sm text-[#5c6b62]">
++          No activity yet — record your first entry and it will appear here.
++        </p>
++      ) : (
++        <ul className="mt-3 max-h-96 overflow-y-auto khata-scroll pr-1 space-y-1">
++          {events.map((ev) => {
++            const meta = ACTION_META[ev.action] ?? {
++              label: ev.action,
++              Icon: History,
++              className: "bg-[#efe4d2] text-[#5c6b62]",
++            };
++            const Icon = meta.Icon;
++            const detail = describeEvent(ev.action, ev.data);
++            return (
++              <li
++                key={ev.id}
++                className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-[#efe4d2]/50"
++              >
++                <span
++                  className={`flex size-8 shrink-0 items-center justify-center rounded-full ${meta.className}`}
++                  aria-hidden="true"
++                >
++                  <Icon className="size-4" />
++                </span>
++                <span className="min-w-0 flex-1">
++                  <span className="block text-sm font-semibold text-[#1c261f]">
++                    {meta.label}
++                  </span>
++                  {detail && (
++                    <span className="block truncate text-xs text-[#5c6b62]">{detail}</span>
++                  )}
++                </span>
++                <time
++                  className="shrink-0 text-xs text-[#5c6b62] tabular-nums"
++                  dateTime={ev.createdAt}
++                  title={new Date(ev.createdAt).toLocaleString("en-IN")}
++                >
++                  {relTime(ev.createdAt)}
++                </time>
++              </li>
++            );
++          })}
++        </ul>
++      )}
++    </div>
++  );
++}
+diff --git a/src/components/khata/tabs/khata-tab.tsx b/src/components/khata/tabs/khata-tab.tsx
+index 07983f5..195b59f 100644
+--- a/src/components/khata/tabs/khata-tab.tsx
++++ b/src/components/khata/tabs/khata-tab.tsx
+@@ -29,6 +29,7 @@ import {
+   SearchCheck,
+   X,
+   ClipboardPen,
++  WifiOff,
+ } from "lucide-react";
+ import { formatINR } from "@/lib/format";
+ import { parse } from "@/lib/parser";
+@@ -46,6 +47,9 @@ import { emptyEntry, EntryForm, type EntryValues } from "../entry-form";
+ type EntryMode = "parse" | "manual";
+ type Status = { msg: string; kind: "ok" | "error" | "" };
+ 
++/** localStorage key for the in-progress entry (survives page reloads). */
++const DRAFT_KEY = "udhaar-khata-draft-v1";
++
+ interface ConfirmState {
+   text: string;
+   values: EntryValues;
+@@ -83,6 +87,46 @@ export function KhataTab({
+     body: Record<string, unknown>;
+   } | null>(null);
+ 
++  /* ---------- offline awareness (no fake offline sync — honest banner) ---------- */
++  const [online, setOnline] = useState(true);
++  useEffect(() => {
++    setOnline(navigator.onLine);
++    const up = () => setOnline(true);
++    const down = () => setOnline(false);
++    window.addEventListener("online", up);
++    window.addEventListener("offline", down);
++    return () => {
++      window.removeEventListener("online", up);
++      window.removeEventListener("offline", down);
++    };
++  }, []);
++
++  /* ---------- draft persistence: typed text + manual form survive reloads ---------- */
++  const [draftHydrated, setDraftHydrated] = useState(false);
++  useEffect(() => {
++    try {
++      const raw = window.localStorage.getItem(DRAFT_KEY);
++      if (raw) {
++        const d = JSON.parse(raw) as { sentence?: string; manual?: EntryValues };
++        if (typeof d.sentence === "string") setSentence(d.sentence);
++        if (d.manual && typeof d.manual === "object") {
++          setManual({ ...emptyEntry, ...d.manual });
++        }
++      }
++    } catch {
++      // corrupted draft — ignore, start fresh
++    }
++    setDraftHydrated(true);
++  }, []);
++  useEffect(() => {
++    if (!draftHydrated) return;
++    try {
++      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ sentence, manual }));
++    } catch {
++      // storage full/blocked — drafts are a nicety, not a requirement
++    }
++  }, [sentence, manual, draftHydrated]);
++
+   /* ---------- voice input (preserved feature) ---------- */
+   const voice = useVoiceInput((text) => setSentence(text));
+   useEffect(() => {
+@@ -134,6 +178,13 @@ export function KhataTab({
+   /* ---------- save (the ONLY call that writes to the ledger) ---------- */
+   const saveEntry = useCallback(
+     async (values: EntryValues, forceBody?: Record<string, unknown>) => {
++      if (!navigator.onLine) {
++        setStatus({
++          msg: "You are offline — the entry was kept as a draft. Save it once the connection returns.",
++          kind: "error",
++        });
++        return;
++      }
+       const phone = values.phone.trim();
+       if (phone && !isValidPhone(phone)) {
+         setStatus({
+@@ -258,6 +309,20 @@ export function KhataTab({
+ 
+   return (
+     <div className="space-y-5">
++      {/* ---------- offline banner ---------- */}
++      {!online && (
++        <div
++          role="status"
++          className="flex items-start gap-3 rounded-2xl border border-[#9b2c2c]/40 bg-[#f6d9d9] px-4 py-3"
++        >
++          <WifiOff className="mt-0.5 size-4 shrink-0 text-[#9b2c2c]" aria-hidden="true" />
++          <p className="text-sm text-[#7a231f]">
++            You are offline. Entries can&apos;t be saved right now — anything you type
++            is kept as a draft and will still be here when the connection returns.
++          </p>
++        </div>
++      )}
++
+       {/* ---------- demo banner ---------- */}
+       {demoData && !demoDismissed && (
+         <div
+diff --git a/src/components/khata/tabs/settings-tab.tsx b/src/components/khata/tabs/settings-tab.tsx
+index 1120d0a..116bf24 100644
+--- a/src/components/khata/tabs/settings-tab.tsx
++++ b/src/components/khata/tabs/settings-tab.tsx
+@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/use-toast";
+ import { Loader2, ShieldCheck, TriangleAlert, Download, Store } from "lucide-react";
+ import type { SettingsPublic } from "@/lib/types";
+ import { errOf, khataFetch, khataPost } from "../api";
++import { ActivityLogCard, RestoreBackupCard } from "../data-safety";
+ 
+ export function SettingsTab({
+   settings,
+@@ -206,6 +207,7 @@ export function SettingsTab({
+               Download full backup (JSON)
+             </a>
+           </Button>
++          <RestoreBackupCard refreshAll={refreshAll} />
+         </div>
+       </section>
+ 
+@@ -263,6 +265,11 @@ export function SettingsTab({
+         </div>
+       </section>
+ 
++      {/* activity log (audit trail) */}
++      <section aria-labelledby="activity-heading">
++        <ActivityLogCard />
++      </section>
++
+       <p className="text-xs text-[#5c6b62]">
+         This local demo has no login. Do not store real customer data here; see the
+         roadmap for multi-user auth.
+diff --git a/src/lib/khata.ts b/src/lib/khata.ts
+index 1a31cd7..b3d666b 100644
+--- a/src/lib/khata.ts
++++ b/src/lib/khata.ts
+@@ -1,6 +1,7 @@
+ import { db } from "@/lib/db";
+-import { formatINR, istDayKey, istDayStart } from "@/lib/format";
++import { formatINR, istDayKey, istDayStart, istTimestamp } from "@/lib/format";
+ import type {
++  AuditPublic,
+   CustomerPublic,
+   ReminderPublic,
+   SettingsPublic,
+@@ -422,6 +423,28 @@ export async function listReminders(limit = 50): Promise<ReminderPublic[]> {
+   return rows.map(publicReminder);
+ }
+ 
++/* ---------------- audit trail ---------------- */
++
++/**
++ * Read-only view of the append-only audit trail. Every financially
++ * significant action (entry created, entry reversed, customer updated,
++ * settings changed, demo reset) is recorded here — surfaced in Settings.
++ */
++export async function listAuditEvents(limit = 50): Promise<AuditPublic[]> {
++  const events = await db.auditEvent.findMany({
++    orderBy: { createdAt: "desc" },
++    take: Math.min(Math.max(limit, 1), 200),
++  });
++  return events.map((e) => ({
++    id: e.id,
++    action: e.action,
++    entity: e.entity,
++    entityId: e.entityId,
++    data: e.data,
++    createdAt: e.createdAt.toISOString(),
++  }));
++}
++
+ /**
+  * Reminder run (the daily-job equivalent): find customers whose dues are
+  * older than `overdueDays` (default from Settings) and write reminder records
+@@ -480,6 +503,61 @@ export async function customerReminder(name: string): Promise<ReminderPublic | n
+   return publicReminder(row);
+ }
+ 
++/**
++ * WhatsApp-ready STATEMENT for one customer: their last ledger lines (real
++ * data only), the outstanding balance and the shop name. Unlike a reminder,
++ * a statement works for settled customers too — useful as a receipt.
++ */
++export async function customerStatement(
++  name: string
++): Promise<{
++  whatsappUrl: string;
++  message: string;
++  customer: CustomerPublic;
++  lines: number;
++} | null> {
++  const key = nameKey(name);
++  const c = await db.customer.findUnique({ where: { nameKey: key } });
++  if (!c) return null;
++
++  const txns = await db.transaction.findMany({
++    where: { nameKey: key, reversed: false, isReversal: false },
++    orderBy: { createdAt: "desc" },
++    take: 20,
++  });
++  const settings = await getSettings();
++
++  const lines = txns.map((t) => {
++    const sign = t.txnType === "UDHAAR" ? "+" : "−";
++    return `${istTimestamp(t.createdAt)}  ${sign}₹${(t.amountPaise / 100).toFixed(2)} — ${t.rawText}`;
++  });
++
++  const balanceLine =
++    c.balancePaise > 0
++      ? `Udhaar pending: ₹${(c.balancePaise / 100).toFixed(2)}`
++      : `Khata settled: ₹${(c.balancePaise / 100).toFixed(2)}`;
++
++  const message = [
++    `*${settings.shopName}* — khata statement`,
++    `Customer: ${c.name}`,
++    "",
++    ...(lines.length > 0 ? lines : ["(no entries yet)"]),
++    "",
++    balanceLine,
++    c.balancePaise > 0
++      ? "Kripya jald payment kar dein. Dhanyavaad!"
++      : "Payment ke liye dhanyavaad!",
++  ].join("\n");
++
++  const encoded = encodeURIComponent(message);
++  const digits = normalizePhone(c.phone);
++  const whatsappUrl = digits
++    ? `https://wa.me/91${digits}?text=${encoded}`
++    : `https://wa.me/?text=${encoded}`;
++
++  return { whatsappUrl, message, customer: publicCustomer(c), lines: lines.length };
++}
++
+ /* ---------------- reports ---------------- */
+ 
+ export type ReportRange = "today" | "7d" | "30d" | "all" | "custom";
+@@ -679,6 +757,299 @@ export async function exportBackupJson() {
+   };
+ }
+ 
++/* ---------------- restore from backup ---------------- */
++
++interface BackupCustomerInput {
++  nameKey: string;
++  name: string;
++  phone?: string | null;
++  notes?: string | null;
++}
++
++interface BackupTxnInput {
++  id?: string;
++  nameKey: string;
++  name: string;
++  amountPaise: number;
++  txnType: string;
++  rawText: string;
++  note?: string | null;
++  reversed?: boolean;
++  isReversal?: boolean;
++  createdAt: string;
++}
++
++export interface RestoreResult {
++  mode: "replace" | "merge";
++  importedCustomers: number;
++  importedTransactions: number;
++  skippedTransactions: number;
++  exportedAt: string | null;
++}
++
++const MAX_BACKUP_CUSTOMERS = 1000;
++const MAX_BACKUP_TRANSACTIONS = 5000;
++
++/**
++ * Restore a ledger from a backup produced by exportBackupJson().
++ *
++ * - "replace": wipe the current ledger (customers/transactions/reminders) and
++ *   rebuild it from the backup. Audit history is KEPT and the import itself is
++ *   recorded as a new audit event.
++ * - "merge": add only what is missing (customers that don't exist yet,
++ *   transactions whose id is new). Existing profile edits are never clobbered.
++ *
++ * Balances are ALWAYS recomputed from the imported ledger lines (never trusted
++ * from the file), so the ledger stays internally consistent even if the backup
++ * was truncated or hand-edited.
++ */
++export async function restoreBackup(
++  backup: unknown,
++  mode: "replace" | "merge"
++): Promise<RestoreResult> {
++  if (typeof backup !== "object" || backup === null) {
++    throw new Error("The backup file does not look like a Udhaar Khata backup.");
++  }
++  const b = backup as Record<string, unknown>;
++  if (b.format !== "udhaar-khata-backup") {
++    throw new Error(
++      "This file is not a Udhaar Khata backup (missing the format marker). Use the 'Full backup (JSON)' export."
++    );
++  }
++  if (!Array.isArray(b.customers) || !Array.isArray(b.transactions)) {
++    throw new Error("The backup is missing its customers or transactions list.");
++  }
++  if (b.customers.length > MAX_BACKUP_CUSTOMERS) {
++    throw new Error(`Too many customers in the backup (max ${MAX_BACKUP_CUSTOMERS}).`);
++  }
++  if (b.transactions.length > MAX_BACKUP_TRANSACTIONS) {
++    throw new Error(`Too many transactions in the backup (max ${MAX_BACKUP_TRANSACTIONS}).`);
++  }
++
++  // ---- validate every row before touching the database ----
++  const customers: BackupCustomerInput[] = [];
++  for (let i = 0; i < b.customers.length; i++) {
++    const c = b.customers[i] as Record<string, unknown>;
++    const key = typeof c.nameKey === "string" ? c.nameKey.trim().toUpperCase() : "";
++    const name = typeof c.name === "string" ? c.name.trim() : "";
++    if (!key || !name) {
++      throw new Error(`Customer row ${i + 1} is missing a name.`);
++    }
++    customers.push({
++      nameKey: key,
++      name,
++      phone: typeof c.phone === "string" ? normalizePhone(c.phone) : null,
++      notes: typeof c.notes === "string" ? c.notes : null,
++    });
++  }
++
++  const transactions: BackupTxnInput[] = [];
++  for (let i = 0; i < b.transactions.length; i++) {
++    const t = b.transactions[i] as Record<string, unknown>;
++    const key = typeof t.nameKey === "string" ? t.nameKey.trim().toUpperCase() : "";
++    const paise = typeof t.amountPaise === "number" ? t.amountPaise : NaN;
++    const type = typeof t.txnType === "string" ? t.txnType : "";
++    const at = typeof t.createdAt === "string" ? new Date(t.createdAt) : null;
++    if (!key) throw new Error(`Transaction row ${i + 1} is missing the customer.`);
++    if (!Number.isInteger(paise) || paise <= 0 || paise > RUPEE_MAX * 100) {
++      throw new Error(`Transaction row ${i + 1} has an invalid amount.`);
++    }
++    if (type !== "UDHAAR" && type !== "PAYMENT") {
++      throw new Error(`Transaction row ${i + 1} has an unknown entry type.`);
++    }
++    if (!at || Number.isNaN(at.getTime())) {
++      throw new Error(`Transaction row ${i + 1} has an invalid date.`);
++    }
++    transactions.push({
++      id: typeof t.id === "string" && t.id ? t.id : undefined,
++      nameKey: key,
++      name: typeof t.name === "string" && t.name.trim() ? t.name.trim() : key,
++      amountPaise: paise,
++      txnType: type,
++      rawText:
++        typeof t.rawText === "string" && t.rawText.trim()
++          ? t.rawText
++          : "Restored from backup",
++      note: typeof t.note === "string" ? t.note : null,
++      reversed: t.reversed === true,
++      isReversal: t.isReversal === true,
++      createdAt: at.toISOString(),
++    });
++  }
++
++  // Customer stubs for transactions whose customer row is missing from the
++  // backup (keeps referential integrity without dropping ledger lines).
++  const known = new Set(customers.map((c) => c.nameKey));
++  for (const t of transactions) {
++    if (!known.has(t.nameKey)) {
++      customers.push({ nameKey: t.nameKey, name: t.name, phone: null, notes: null });
++      known.add(t.nameKey);
++    }
++  }
++
++  const exportedAt = typeof b.exportedAt === "string" ? b.exportedAt : null;
++
++  const result = await db.$transaction(
++    async (tx) => {
++      let skipped = 0;
++
++      if (mode === "replace") {
++        await tx.reminder.deleteMany();
++        await tx.transaction.deleteMany();
++        await tx.customer.deleteMany();
++      }
++
++      // ---- customers ----
++      if (mode === "merge") {
++        // Merge never overwrites an existing customer's profile edits.
++        const existing = new Set(
++          (
++            await tx.customer.findMany({
++              where: { nameKey: { in: customers.map((c) => c.nameKey) } },
++              select: { nameKey: true },
++            })
++          ).map((r) => r.nameKey)
++        );
++        const fresh = customers.filter((c) => !existing.has(c.nameKey));
++        if (fresh.length > 0) {
++          await tx.customer.createMany({
++            data: fresh.map((c) => ({
++              nameKey: c.nameKey,
++              name: c.name,
++              phone: c.phone,
++              notes: c.notes,
++            })),
++          });
++        }
++      } else {
++        await tx.customer.createMany({
++          data: customers.map((c) => ({
++            nameKey: c.nameKey,
++            name: c.name,
++            phone: c.phone,
++            notes: c.notes,
++          })),
++        });
++      }
++
++      // ---- transactions (dedupe by id in merge mode) ----
++      let rows = transactions;
++      if (mode === "merge" && transactions.some((t) => t.id)) {
++        const ids = transactions
++          .map((t) => t.id)
++          .filter((x): x is string => Boolean(x));
++        const existing = new Set(
++          (
++            await tx.transaction.findMany({
++              where: { id: { in: ids } },
++              select: { id: true },
++            })
++          ).map((r) => r.id)
++        );
++        rows = transactions.filter((t) => !t.id || !existing.has(t.id));
++        skipped = transactions.length - rows.length;
++      }
++      if (rows.length > 0) {
++        await tx.transaction.createMany({
++          data: rows.map((t) => ({
++            ...(t.id ? { id: t.id } : {}),
++            nameKey: t.nameKey,
++            name: t.name,
++            amountPaise: t.amountPaise,
++            txnType: t.txnType,
++            rawText: t.rawText,
++            note: t.note,
++            reversed: t.reversed,
++            isReversal: t.isReversal,
++            createdAt: new Date(t.createdAt),
++          })),
++        });
++      }
++
++      // ---- recompute every imported customer's balance FROM the ledger ----
++      // (single aggregation pass — numbers in the backup are never trusted)
++      const keys = [...new Set(mode === "replace" ? customers.map((c) => c.nameKey) : [...known])];
++      const sums = await tx.transaction.groupBy({
++        by: ["nameKey", "txnType"],
++        where: { nameKey: { in: keys }, reversed: false, isReversal: false },
++        _sum: { amountPaise: true },
++      });
++      const ranges = await tx.transaction.groupBy({
++        by: ["nameKey"],
++        where: { nameKey: { in: keys }, reversed: false, isReversal: false },
++        _min: { createdAt: true },
++        _max: { createdAt: true },
++      });
++      const firstDues = await tx.transaction.groupBy({
++        by: ["nameKey"],
++        where: { nameKey: { in: keys }, txnType: "UDHAAR", reversed: false, isReversal: false },
++        _min: { createdAt: true },
++      });
++
++      const balanceOf = new Map<string, number>();
++      for (const s of sums) {
++        const delta = s.txnType === "UDHAAR" ? s._sum.amountPaise : -s._sum.amountPaise;
++        balanceOf.set(s.nameKey, (balanceOf.get(s.nameKey) ?? 0) + delta);
++      }
++      const lastOf = new Map(ranges.map((r) => [r.nameKey, r._max.createdAt]));
++      const dueOf = new Map(firstDues.map((r) => [r.nameKey, r._min.createdAt]));
++
++      for (const key of keys) {
++        const balance = balanceOf.get(key) ?? 0;
++        await tx.customer.update({
++          where: { nameKey: key },
++          data: {
++            balancePaise: balance,
++            lastTxnAt: lastOf.get(key) ?? null,
++            firstDueAt: balance > 0 ? (dueOf.get(key) ?? null) : null,
++          },
++        });
++      }
++
++      // A restore of real data means the ledger is no longer "demo".
++      // (tx-scoped — the global db client must not be touched while the
++      // SQLite transaction is open, it deadlocks the database file.)
++      await tx.settings.upsert({
++        where: { id: "singleton" },
++        create: { id: "singleton" },
++        update: {},
++      });
++      if (mode === "replace") {
++        await tx.settings.update({
++          where: { id: "singleton" },
++          data: { demoData: false },
++        });
++      }
++
++      await tx.auditEvent.create({
++        data: {
++          action: "import_backup",
++          entity: "settings",
++          entityId: "singleton",
++          data: JSON.stringify({
++            mode,
++            importedCustomers: customers.length,
++            importedTransactions: transactions.length - skipped,
++            skippedTransactions: skipped,
++            exportedAt,
++          }),
++        },
++      });
++
++      return { skipped };
++    },
++    { timeout: 30_000, maxWait: 10_000 }
++  );
++
++  return {
++    mode,
++    importedCustomers: customers.length,
++    importedTransactions: transactions.length - result.skipped,
++    skippedTransactions: result.skipped,
++    exportedAt,
++  };
++}
++
+ /* ---------------- demo data ---------------- */
+ 
+ /**
+diff --git a/src/lib/parser.ts b/src/lib/parser.ts
+index 57f219b..7691ccc 100644
+--- a/src/lib/parser.ts
++++ b/src/lib/parser.ts
+@@ -48,6 +48,25 @@ const PAYMENT_WORDS = new Set([
+   "clearing",
+   "deposit",
+   "deposited",
++  // money the customer GAVE to the shop (fixed after the QA battery found
++  // "Ramesh gave 50" / "collected 50 from Ramesh" / "Ramesh se 50 mila"
++  // misclassified as new credit).
++  "gave",
++  "gaye",
++  "gae",
++  "collect",
++  "collects",
++  "collected",
++  "received",
++  "receive",
++  "mila",
++  "milaa",
++  "mile",
++  "milgaya",
++  "milgayi",
++  "vasool",
++  "vasoole",
++  "vasoolee",
+ ]);
+ 
+ const UDHAAR_WORDS = new Set([
+@@ -201,6 +220,17 @@ function extractAmount(text: string): number | null {
+   return round2(amounts[amounts.length - 1]);
+ }
+ 
++/**
++ * Capitalize and join a picked name ("ramesh kumar" -> "Ramesh Kumar").
++ */
++function titleCaseName(parts: string[]): string {
++  return parts
++    .join(" ")
++    .split(/\s+/)
++    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
++    .join(" ");
++}
++
+ function extractCustomer(text: string): string | null {
+   const cleaned = text.replace(/[₹,]/g, " ");
+   const words = cleaned.match(/[A-Za-z][A-Za-z'.]*/g) ?? [];
+@@ -211,13 +241,31 @@ function extractCustomer(text: string): string | null {
+     if (NAME_STOP.has(lowered)) break;
+     parts.push(word);
+   }
++
++  // Second chance (added after the QA battery): sentences that don't START
++  // with the customer's name — "₹120 udhaar Ramesh", "udhaar 200 Ramesh",
++  // "liya Ramesh ne 100". Scan the whole line for the first word that is
++  // neither a stop word nor an honorific, and take up to three words from
++  // there (stopping at the next stop word).
++  if (parts.length === 0) {
++    for (let i = 0; i < words.length; i++) {
++      const lowered = words[i].toLowerCase().replace(/\.$/, "");
++      if (HONORIFICS.has(lowered) || NAME_STOP.has(lowered)) continue;
++      const rest: string[] = [words[i]];
++      for (let j = i + 1; j < words.length && rest.length < 3; j++) {
++        const nextLowered = words[j].toLowerCase().replace(/\.$/, "");
++        if (HONORIFICS.has(nextLowered)) continue;
++        if (NAME_STOP.has(nextLowered)) break;
++        rest.push(words[j]);
++      }
++      parts.push(...rest);
++      break;
++    }
++  }
++
+   if (parts.length === 0) return null;
+   // Most personal names in this context are one to three words.
+-  const name = parts.slice(0, 3).join(" ");
+-  return name
+-    .split(/\s+/)
+-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+-    .join(" ");
++  return titleCaseName(parts.slice(0, 3));
+ }
+ 
+ export function parse(input: string | null | undefined): ParseResult {
+-- 
+2.47.3
+
