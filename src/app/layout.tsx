@@ -15,18 +15,20 @@ const sourceSans = Source_Sans_3({
   weight: ["400", "500", "600", "700"],
 });
 
+const BASE = process.env.STATIC_EXPORT === "1" ? "/udhaar-khata" : "";
+
 export const metadata: Metadata = {
   title: "Udhaar Khata — kirana credit ledger",
   description:
     "Type or speak a line the way you would write it in a paper khata. The shop ledger updates at once, and overdue dues get a WhatsApp reminder link.",
   keywords: ["khata", "udhaar", "kirana", "credit ledger", "digital khata"],
-  manifest: "/manifest.webmanifest",
+  manifest: `${BASE}/manifest.webmanifest`,
   icons: {
     icon: [
-      { url: "/icon.svg", type: "image/svg+xml" },
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: `${BASE}/icon.svg`, type: "image/svg+xml" },
+      { url: `${BASE}/icon-192.png`, sizes: "192x192", type: "image/png" },
     ],
-    apple: "/icon-192.png",
+    apple: `${BASE}/icon-192.png`,
   },
   appleWebApp: {
     capable: true,

@@ -58,3 +58,8 @@ tool-results/
 # local database files
 db/
 *.db
+
+# static export build artifacts
+out/
+.next-static/
+.api-parked/

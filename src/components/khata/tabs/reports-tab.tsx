@@ -28,7 +28,7 @@ import {
 import { CreditCard, HandCoins, Scale, ListOrdered, Download } from "lucide-react";
 import { formatINR } from "@/lib/format";
 import type { ReportsResponse } from "@/lib/types";
-import { dayLabel, errOf, khataFetch, KHATA } from "../api";
+import { dayLabel, downloadExport, errOf, khataFetch, KHATA } from "../api";
 import { EmptyState, SkeletonRows } from "../txn-line";
 
 type Range = "today" | "7d" | "30d" | "all";
@@ -289,19 +289,40 @@ export function ReportsTab() {
           </h3>
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" className="border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10">
-              <a href="/api/export/transactions.csv" download>
+              <a
+                href="/api/export/transactions.csv"
+                download
+                onClick={(e) => {
+                  e.preventDefault();
+                  void downloadExport("/api/export/transactions.csv");
+                }}
+              >
                 <Download className="size-4" aria-hidden="true" />
                 Transactions CSV
               </a>
             </Button>
             <Button asChild variant="outline" className="border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10">
-              <a href="/api/export/outstanding.csv" download>
+              <a
+                href="/api/export/outstanding.csv"
+                download
+                onClick={(e) => {
+                  e.preventDefault();
+                  void downloadExport("/api/export/outstanding.csv");
+                }}
+              >
                 <Download className="size-4" aria-hidden="true" />
                 Outstanding CSV
               </a>
             </Button>
             <Button asChild variant="outline" className="border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10">
-              <a href="/api/export/backup.json" download>
+              <a
+                href="/api/export/backup.json"
+                download
+                onClick={(e) => {
+                  e.preventDefault();
+                  void downloadExport("/api/export/backup.json");
+                }}
+              >
                 <Download className="size-4" aria-hidden="true" />
                 Full backup (JSON)
               </a>

@@ -7,3 +7,4 @@ export async function GET() {
     shop_id: "default",
   });
 }
+

@@ -31,7 +31,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import type { SettingsPublic } from "@/lib/types";
-import { daysSinceBackup, errOf, khataFetch, khataPost, stampBackupNow } from "../api";
+import { daysSinceBackup, downloadExport, errOf, khataFetch, khataPost, stampBackupNow } from "../api";
 import { ActivityLogCard, RestoreBackupCard } from "../data-safety";
 
 export function SettingsTab({
@@ -270,7 +270,9 @@ export function SettingsTab({
             <a
               href="/api/export/backup.json"
               download
-              onClick={() => {
+              onClick={(e) => {
+                e.preventDefault();
+                void downloadExport("/api/export/backup.json");
                 stampBackupNow();
                 setBackupDays(0);
               }}

@@ -1,8 +1,19 @@
 /**
  * Shared client helpers for the Udhaar Khata frontend.
  * All money crosses the wire as integer paise; display goes through formatINR.
+ *
+ * STATIC BUILD (GitHub Pages): there is no server, so khataFetch routes every
+ * /api/* call to local-server.ts — a localStorage-backed ledger that mirrors
+ * the server contracts. The full-stack path is untouched when not static.
  */
 import type { TxnType } from "@/lib/types";
+import { handleLocalRequest } from "./local-server";
+
+/**
+ * Baked in at build time. The static-export build sets NEXT_PUBLIC_STATIC=1,
+ * which flips every API call to the in-browser ledger.
+ */
+export const IS_STATIC: boolean = process.env.NEXT_PUBLIC_STATIC === "1";
 
 export interface KhataResult<T = Record<string, unknown>> {
   ok: boolean;
@@ -20,6 +31,10 @@ export async function khataFetch<T = Record<string, unknown>>(
   url: string,
   init?: RequestInit
 ): Promise<KhataResult<T>> {
+  if (IS_STATIC) {
+    // Static Pages build: serve from the in-browser ledger (same contract).
+    return handleLocalRequest<T>(url, init);
+  }
   let res: Response;
   try {
     res = await fetch(url, init);
@@ -179,6 +194,36 @@ export async function copyText(text: string): Promise<boolean> {
     return ok;
   } catch {
     return false;
+  }
+}
+
+/* ---------------- file exports (backup / CSV) ---------------- */
+
+function triggerBlobDownload(content: string, mime: string, filename: string): void {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/**
+ * Download an export file. Full-stack mode: plain navigation (the server sets
+ * the content-disposition filename). Static mode: build the file in-browser
+ * from the local ledger and download it as a Blob.
+ */
+export async function downloadExport(url: string): Promise<void> {
+  if (!IS_STATIC) {
+    window.location.href = url;
+    return;
+  }
+  const result = await handleLocalRequest<Record<string, unknown>>(url);
+  if (result.blob) {
+    triggerBlobDownload(result.blob.content, result.blob.mime, result.blob.filename);
   }
 }
 

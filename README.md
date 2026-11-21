@@ -69,7 +69,22 @@ No environment secrets required beyond a local `DATABASE_URL` (created automatic
 | `POST /api/transcribe` | Voice fallback transcription |
 | `GET /api/health` | Health check |
 
+## Live Demo on GitHub Pages
+
+A fully static build is deployed to **https://aaron-samuvel.github.io/udhaar-khata/**
+(via the `deploy-pages.yml` GitHub Actions workflow). GitHub Pages cannot host a
+server, so the demo runs an identical in-browser ledger: entries, balances,
+reminders, reports and settings work exactly the same, with data stored in
+`localStorage` on your device (backup/restore is the transport between devices).
+Recorded-voice transcription needs the full-stack server; browser speech
+recognition works where supported.
+
+```bash
+bun run build:static   # STATIC_EXPORT=1 NEXT_PUBLIC_STATIC=1 next build → .next-static/
+```
+
 ## Legacy Version
+
 
 The original AWS SAM serverless implementation (Lambda + API Gateway) remains available
 in git history — see the `6f0aeea` commit or the `nextjs-rebuild` branch history.

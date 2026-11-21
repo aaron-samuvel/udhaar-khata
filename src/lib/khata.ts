@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { amountInWords, formatINR, istDayKey, istDayStart, istTimestamp } from "@/lib/format";
+import { formatINR, istDayKey, istDayStart, istTimestamp } from "@/lib/format";
 import type {
   AuditPublic,
   CustomerPublic,
@@ -8,89 +8,42 @@ import type {
   TxnPublic,
   TxnType,
 } from "@/lib/types";
-import type { Customer, Reminder, Settings, Transaction } from "@prisma/client";
+import type { Settings, Transaction } from "@prisma/client";
+import {
+  DUPLICATE_WINDOW_MS,
+  RUPEE_MAX,
+  daysSince,
+  isValidUpiId,
+  nameKey,
+  normalizePhone,
+  publicCustomer,
+  publicReminder,
+  publicSettings,
+  publicTxn,
+  reminderExtras,
+  renderTemplate,
+  upiCollectLink,
+} from "@/lib/khata-pure";
 
-/** Maximum single-transaction amount: ₹10,00,000 (sane kirana upper bound). */
-export const RUPEE_MAX = 1_000_000;
-/** Window in which an identical entry triggers a duplicate warning. */
-export const DUPLICATE_WINDOW_MS = 3 * 60 * 1000;
-export const DEFAULT_REMINDER_TEMPLATE =
-  "Namaste {name} ji, aapka udhaar Rs {amount} pending hai. Kripya jald payment kar dein. Dhanyavaad! — {shop}";
-
-export function nameKey(name: string): string {
-  return (name ?? "").trim().replace(/\s+/g, " ").toUpperCase();
-}
-
-/** Keep only 10-digit Indian mobile numbers (strips +91 / 91 prefixes). */
-export function normalizePhone(phone?: string | null): string | null {
-  if (!phone) return null;
-  let digits = String(phone).replace(/\D/g, "");
-  if (digits.startsWith("91") && digits.length === 12) digits = digits.slice(2);
-  if (digits.length === 10) return digits;
-  return null;
-}
-
-/** Render the reminder template. Supported placeholders: {name} {amount} {shop} {days}. */
-export function renderTemplate(
-  tpl: string,
-  vars: { name: string; amount: string; shop: string; days: number }
-): string {
-  return tpl
-    .replace(/\{name\}/g, vars.name)
-    .replace(/\{amount\}/g, vars.amount)
-    .replace(/\{shop\}/g, vars.shop)
-    .replace(/\{days\}/g, String(vars.days));
-}
-
-/* ---------------- UPI collect links ---------------- */
-
-/** Basic UPI VPA shape: local@bank (letters/digits/dots/hyphens/underscores). */
-export function isValidUpiId(v: string): boolean {
-  return /^[A-Za-z0-9.\-_]{2,256}@[A-Za-z]{2,64}$/.test(v.trim());
-}
-
-/**
- * UPI deep link (intent URI) that opens any UPI app (GPay/PhonePe/Paytm/BHIM)
- * with the amount pre-filled. This is the honest alternative to sending money
- * requests — the customer sees the amount and approves it in THEIR app.
- */
-export function upiCollectLink(
-  upiId: string,
-  payeeName: string,
-  amountPaise: number,
-  note: string
-): string {
-  const params = new URLSearchParams({
-    pa: upiId.trim(),
-    pn: payeeName.slice(0, 50),
-    am: (amountPaise / 100).toFixed(2),
-    cu: "INR",
-    tn: note.slice(0, 50),
-  });
-  return `upi://pay?${params.toString()}`;
-}
-
-/**
- * Extras appended after the shopkeeper's reminder template: the amount in
- * words (standard on Indian receipts) and, when a UPI ID is configured, a
- * one-tap payment link.
- */
-function reminderExtras(
-  settings: Settings,
-  name: string,
-  balancePaise: number
-): string[] {
-  const extras: string[] = [];
-  extras.push(`Amount in words: ${amountInWords(balancePaise)}`);
-  if (settings.upiId && isValidUpiId(settings.upiId)) {
-    extras.push(
-      `Pay in one tap: ${upiCollectLink(settings.upiId, settings.shopName, balancePaise, `Udhaar ${name}`)}`
-    );
-  }
-  return extras;
-}
+// Pure helpers live in khata-pure.ts so the browser bundle can reuse them
+// without dragging Prisma in; re-exported here for every existing importer.
+export {
+  DEFAULT_REMINDER_TEMPLATE,
+  DUPLICATE_WINDOW_MS,
+  RUPEE_MAX,
+  daysSince,
+  isValidUpiId,
+  nameKey,
+  normalizePhone,
+  publicCustomer,
+  publicSettings,
+  publicTxn,
+  renderTemplate,
+  upiCollectLink,
+} from "@/lib/khata-pure";
 
 /* ---------------- settings ---------------- */
+// (getSettings/updateSettings below; publicSettings imported from khata-pure)
 
 export async function getSettings(): Promise<Settings> {
   return db.settings.upsert({
@@ -98,16 +51,6 @@ export async function getSettings(): Promise<Settings> {
     create: { id: "singleton" },
     update: {},
   });
-}
-
-export function publicSettings(s: Settings): SettingsPublic {
-  return {
-    shopName: s.shopName,
-    overdueDays: s.overdueDays,
-    reminderTemplate: s.reminderTemplate,
-    upiId: s.upiId ?? null,
-    demoData: s.demoData,
-  };
 }
 
 export async function updateSettings(
@@ -127,61 +70,6 @@ export async function updateSettings(
     },
   });
   return publicSettings(updated);
-}
-
-/* ---------------- serializers ---------------- */
-
-export function publicTxn(t: Transaction): TxnPublic {
-  return {
-    id: t.id,
-    name: t.name,
-    nameKey: t.nameKey,
-    amount: t.amountPaise / 100,
-    amountPaise: t.amountPaise,
-    txnType: t.txnType as TxnType,
-    rawText: t.rawText,
-    note: t.note,
-    reversed: t.reversed,
-    isReversal: t.isReversal,
-    createdAt: t.createdAt.toISOString(),
-  };
-}
-
-export function publicCustomer(c: Customer): CustomerPublic {
-  return {
-    name: c.name,
-    nameKey: c.nameKey,
-    balance: c.balancePaise / 100,
-    balancePaise: c.balancePaise,
-    phone: c.phone,
-    notes: c.notes,
-    creditLimitPaise: c.creditLimitPaise ?? null,
-    creditLimit: c.creditLimitPaise != null ? c.creditLimitPaise / 100 : null,
-    archived: c.archived,
-    firstDueAt: c.firstDueAt?.toISOString() ?? null,
-    lastTxnAt: c.lastTxnAt?.toISOString() ?? null,
-    createdAt: c.createdAt.toISOString(),
-  };
-}
-
-function publicReminder(r: Reminder): ReminderPublic {
-  return {
-    id: r.id,
-    name: r.name,
-    balance: r.balancePaise / 100,
-    balancePaise: r.balancePaise,
-    daysOverdue: r.daysOverdue,
-    phone: r.phone,
-    whatsappUrl: r.whatsappUrl,
-    message: r.message,
-    runId: r.runId,
-    createdAt: r.createdAt.toISOString(),
-  };
-}
-
-export function daysSince(date: Date | null | undefined): number {
-  if (!date) return 0;
-  return Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000));
 }
 
 /* ---------------- WhatsApp ---------------- */
