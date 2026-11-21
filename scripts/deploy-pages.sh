@@ -20,6 +20,9 @@ bun run build:static
 # 2. Stage the artifact in a temp repo and push it as gh-pages.
 DEPLOY_DIR="$(mktemp -d)"
 cp -r .next-static/. "$DEPLOY_DIR"/
+# GitHub Pages runs Jekyll by default, which skips underscore-prefixed dirs
+# (_next/!). The empty .nojekyll marker disables Jekyll processing.
+touch "$DEPLOY_DIR/.nojekyll"
 cd "$DEPLOY_DIR"
 git init -q -b gh-pages
 git add -A
