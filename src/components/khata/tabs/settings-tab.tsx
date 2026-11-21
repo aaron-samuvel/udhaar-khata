@@ -22,9 +22,16 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ShieldCheck, TriangleAlert, Download, Store } from "lucide-react";
+import {
+  Loader2,
+  ShieldCheck,
+  TriangleAlert,
+  Download,
+  Store,
+  Smartphone,
+} from "lucide-react";
 import type { SettingsPublic } from "@/lib/types";
-import { errOf, khataFetch, khataPost } from "../api";
+import { daysSinceBackup, errOf, khataFetch, khataPost, stampBackupNow } from "../api";
 import { ActivityLogCard, RestoreBackupCard } from "../data-safety";
 
 export function SettingsTab({
@@ -38,8 +45,10 @@ export function SettingsTab({
   const [shopName, setShopName] = useState("");
   const [overdueDays, setOverdueDays] = useState("30");
   const [reminderTemplate, setReminderTemplate] = useState("");
+  const [upiId, setUpiId] = useState("");
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [backupDays, setBackupDays] = useState<number | null>(null);
 
   // Sync the form whenever freshly-loaded settings arrive.
   useEffect(() => {
@@ -47,7 +56,13 @@ export function SettingsTab({
     setShopName(settings.shopName);
     setOverdueDays(String(settings.overdueDays));
     setReminderTemplate(settings.reminderTemplate);
+    setUpiId(settings.upiId ?? "");
   }, [settings]);
+
+  // Backup freshness is device-local (localStorage) — read once after mount.
+  useEffect(() => {
+    setBackupDays(daysSinceBackup());
+  }, []);
 
   const saveSettings = useCallback(async () => {
     const days = Number.parseInt(overdueDays, 10);
@@ -75,6 +90,14 @@ export function SettingsTab({
       });
       return;
     }
+    if (upiId.trim() && !/^[A-Za-z0-9.\-_]{2,256}@[A-Za-z]{2,64}$/.test(upiId.trim())) {
+      toast({
+        title: "UPI ID looks wrong",
+        description: "It should look like yourname@bank — for example shop@okicici. Leave it blank to disable pay links.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSaving(true);
     try {
       const result = await khataFetch("/api/settings", {
@@ -84,6 +107,7 @@ export function SettingsTab({
           shopName: shopName.trim(),
           overdueDays: days,
           reminderTemplate: reminderTemplate.trim(),
+          upiId: upiId.trim() || null,
         }),
       });
       if (!result.ok) {
@@ -97,7 +121,7 @@ export function SettingsTab({
     } finally {
       setSaving(false);
     }
-  }, [shopName, overdueDays, reminderTemplate, toast, refreshAll]);
+  }, [shopName, overdueDays, reminderTemplate, upiId, toast, refreshAll]);
 
   const resetDemo = useCallback(async () => {
     setResetting(true);
@@ -171,7 +195,28 @@ export function SettingsTab({
               />
               <p className="text-xs text-[#5c6b62]">
                 Placeholders: {"{name}"} {"{amount}"} {"{shop}"} {"{days}"} — amount is
-                in rupees
+                in rupees. Amount-in-words and the UPI pay link (if set below) are
+                added automatically.
+              </p>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="shop-upi" className="text-sm flex items-center gap-1.5">
+                <Smartphone className="size-3.5 text-[#0f5c4c]" aria-hidden="true" />
+                UPI ID (optional)
+              </Label>
+              <Input
+                id="shop-upi"
+                value={upiId}
+                placeholder="e.g. shop@okicici"
+                onChange={(e) => setUpiId(e.target.value)}
+                className="bg-white border-[#e2d5c0]"
+                autoComplete="off"
+              />
+              <p className="text-xs text-[#5c6b62]">
+                When set, WhatsApp reminders and statements include a one-tap
+                <span className="font-semibold"> upi://pay </span>
+                link — the customer approves the payment in their own UPI app.
+                Nothing is charged automatically.
               </p>
             </div>
             <Button
@@ -201,8 +246,35 @@ export function SettingsTab({
             Backups include customers, transactions, reminders and audit history.
             Export regularly and keep the file safe.
           </p>
-          <Button asChild variant="outline" className="mt-3 border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10">
-            <a href="/api/export/backup.json" download>
+          {backupDays !== null && (
+            <p
+              className={`mt-2 text-xs font-medium ${
+                backupDays > 7 ? "text-[#9b2c2c]" : "text-[#5c6b62]"
+              }`}
+              role={backupDays > 7 ? "status" : undefined}
+            >
+              {backupDays === 9999
+                ? "No backup downloaded from this device yet — take one today."
+                : backupDays === 0
+                  ? "Last backup: today."
+                  : backupDays > 7
+                    ? `Last backup was ${backupDays} days ago — download a fresh one.`
+                    : `Last backup: ${backupDays} day${backupDays === 1 ? "" : "s"} ago.`}
+            </p>
+          )}
+          <Button
+            asChild
+            variant="outline"
+            className="mt-3 border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10"
+          >
+            <a
+              href="/api/export/backup.json"
+              download
+              onClick={() => {
+                stampBackupNow();
+                setBackupDays(0);
+              }}
+            >
               <Download className="size-4" aria-hidden="true" />
               Download full backup (JSON)
             </a>

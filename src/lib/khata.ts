@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { formatINR, istDayKey, istDayStart, istTimestamp } from "@/lib/format";
+import { amountInWords, formatINR, istDayKey, istDayStart, istTimestamp } from "@/lib/format";
 import type {
   AuditPublic,
   CustomerPublic,
@@ -42,6 +42,54 @@ export function renderTemplate(
     .replace(/\{days\}/g, String(vars.days));
 }
 
+/* ---------------- UPI collect links ---------------- */
+
+/** Basic UPI VPA shape: local@bank (letters/digits/dots/hyphens/underscores). */
+export function isValidUpiId(v: string): boolean {
+  return /^[A-Za-z0-9.\-_]{2,256}@[A-Za-z]{2,64}$/.test(v.trim());
+}
+
+/**
+ * UPI deep link (intent URI) that opens any UPI app (GPay/PhonePe/Paytm/BHIM)
+ * with the amount pre-filled. This is the honest alternative to sending money
+ * requests — the customer sees the amount and approves it in THEIR app.
+ */
+export function upiCollectLink(
+  upiId: string,
+  payeeName: string,
+  amountPaise: number,
+  note: string
+): string {
+  const params = new URLSearchParams({
+    pa: upiId.trim(),
+    pn: payeeName.slice(0, 50),
+    am: (amountPaise / 100).toFixed(2),
+    cu: "INR",
+    tn: note.slice(0, 50),
+  });
+  return `upi://pay?${params.toString()}`;
+}
+
+/**
+ * Extras appended after the shopkeeper's reminder template: the amount in
+ * words (standard on Indian receipts) and, when a UPI ID is configured, a
+ * one-tap payment link.
+ */
+function reminderExtras(
+  settings: Settings,
+  name: string,
+  balancePaise: number
+): string[] {
+  const extras: string[] = [];
+  extras.push(`Amount in words: ${amountInWords(balancePaise)}`);
+  if (settings.upiId && isValidUpiId(settings.upiId)) {
+    extras.push(
+      `Pay in one tap: ${upiCollectLink(settings.upiId, settings.shopName, balancePaise, `Udhaar ${name}`)}`
+    );
+  }
+  return extras;
+}
+
 /* ---------------- settings ---------------- */
 
 export async function getSettings(): Promise<Settings> {
@@ -57,13 +105,17 @@ export function publicSettings(s: Settings): SettingsPublic {
     shopName: s.shopName,
     overdueDays: s.overdueDays,
     reminderTemplate: s.reminderTemplate,
+    upiId: s.upiId ?? null,
     demoData: s.demoData,
   };
 }
 
 export async function updateSettings(
-  patch: Partial<Pick<Settings, "shopName" | "overdueDays" | "reminderTemplate" | "demoData">>
+  patch: Partial<Pick<Settings, "shopName" | "overdueDays" | "reminderTemplate" | "upiId" | "demoData">>
 ): Promise<SettingsPublic> {
+  if (patch.upiId !== undefined) {
+    patch.upiId = patch.upiId === null || patch.upiId.trim() === "" ? null : patch.upiId.trim();
+  }
   await getSettings();
   const updated = await db.settings.update({ where: { id: "singleton" }, data: patch });
   await db.auditEvent.create({
@@ -136,20 +188,28 @@ export async function whatsappLink(
   balancePaise: number,
   phone: string | null | undefined,
   days: number
-): Promise<{ url: string; message: string }> {
+): Promise<{ url: string; message: string; upiLink: string | null }> {
   const settings = await getSettings();
-  const message = renderTemplate(settings.reminderTemplate, {
-    name,
-    amount: (balancePaise / 100).toFixed(2),
-    shop: settings.shopName,
-    days,
-  });
+  const parts = [
+    renderTemplate(settings.reminderTemplate, {
+      name,
+      amount: (balancePaise / 100).toFixed(2),
+      shop: settings.shopName,
+      days,
+    }),
+    ...reminderExtras(settings, name, balancePaise),
+  ];
+  const message = parts.join("\n");
   const encoded = encodeURIComponent(message);
   const digits = normalizePhone(phone);
   const url = digits
     ? `https://wa.me/91${digits}?text=${encoded}`
     : `https://wa.me/?text=${encoded}`;
-  return { url, message };
+  const upiLink =
+    settings.upiId && isValidUpiId(settings.upiId)
+      ? upiCollectLink(settings.upiId, settings.shopName, balancePaise, `Udhaar ${name}`)
+      : null;
+  return { url, message, upiLink };
 }
 
 /* ---------------- ledger core ---------------- */
@@ -463,6 +523,7 @@ export async function writeReminders(overdueDays?: number): Promise<ReminderPubl
     if (age < days) continue;
 
     const { url, message } = await whatsappLink(c.name, c.balancePaise, c.phone, age);
+    // (whatsappLink also embeds amount-in-words + UPI link extras in the message)
     const row = await db.reminder.create({
       data: {
         nameKey: c.nameKey,
@@ -513,6 +574,7 @@ export async function customerStatement(
 ): Promise<{
   whatsappUrl: string;
   message: string;
+  upiLink: string | null;
   customer: CustomerPublic;
   lines: number;
 } | null> {
@@ -537,16 +599,24 @@ export async function customerStatement(
       ? `Udhaar pending: ₹${(c.balancePaise / 100).toFixed(2)}`
       : `Khata settled: ₹${(c.balancePaise / 100).toFixed(2)}`;
 
+  // For due balances reminderExtras already provides the amount-in-words line
+  // (plus the UPI pay link when configured) — no separate words line here, or
+  // the statement would repeat itself. Settled receipts don't need words for ₹0.
+  const tail: string[] = [balanceLine];
+  if (c.balancePaise > 0) {
+    tail.push(...reminderExtras(settings, c.name, c.balancePaise));
+    tail.push("Kripya jald payment kar dein. Dhanyavaad!");
+  } else {
+    tail.push("Payment ke liye dhanyavaad!");
+  }
+
   const message = [
     `*${settings.shopName}* — khata statement`,
     `Customer: ${c.name}`,
     "",
     ...(lines.length > 0 ? lines : ["(no entries yet)"]),
     "",
-    balanceLine,
-    c.balancePaise > 0
-      ? "Kripya jald payment kar dein. Dhanyavaad!"
-      : "Payment ke liye dhanyavaad!",
+    ...tail,
   ].join("\n");
 
   const encoded = encodeURIComponent(message);
@@ -554,8 +624,12 @@ export async function customerStatement(
   const whatsappUrl = digits
     ? `https://wa.me/91${digits}?text=${encoded}`
     : `https://wa.me/?text=${encoded}`;
+  const upiLink =
+    c.balancePaise > 0 && settings.upiId && isValidUpiId(settings.upiId)
+      ? upiCollectLink(settings.upiId, settings.shopName, c.balancePaise, `Udhaar ${c.name}`)
+      : null;
 
-  return { whatsappUrl, message, customer: publicCustomer(c), lines: lines.length };
+  return { whatsappUrl, message, upiLink, customer: publicCustomer(c), lines: lines.length };
 }
 
 /* ---------------- reports ---------------- */

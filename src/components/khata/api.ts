@@ -114,3 +114,102 @@ export const EXAMPLE_SENTENCES = [
 export function isValidPhone(phone: string): boolean {
   return /^\d{10}$/.test(phone.trim());
 }
+
+/**
+ * Client-side UPI intent link (mirrors the server helper without dragging the
+ * db layer into the client bundle). Same param contract: pa/pn/am/cu/tn.
+ */
+export function upiLinkClient(
+  upiId: string,
+  payeeName: string,
+  amountPaise: number,
+  note: string
+): string {
+  const params = new URLSearchParams({
+    pa: upiId.trim(),
+    pn: payeeName.slice(0, 50),
+    am: (amountPaise / 100).toFixed(2),
+    cu: "INR",
+    tn: note.slice(0, 50),
+  });
+  return `upi://pay?${params.toString()}`;
+}
+
+/**
+ * Open a WhatsApp deep link in a new tab WITHOUT the `noopener` feature string.
+ * Why not `window.open(url, "_blank", "noopener,noreferrer")`? With noopener the
+ * browser always returns null, so a real popup-block is indistinguishable from a
+ * success — the shopkeeper would silently lose the reminder. We open normally,
+ * sever the opener reference, and return false when the popup was blocked so the
+ * caller can fall back to a copyable link.
+ */
+export function openWhatsApp(url: string): boolean {
+  const win = window.open(url, "_blank");
+  if (win) {
+    try {
+      win.opener = null;
+    } catch {
+      // cross-origin opener access can throw in some browsers — already safe
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Clipboard write with an execCommand fallback for non-secure contexts. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/* ---------------- backup freshness (localStorage) ---------------- */
+
+const BACKUP_STAMP_KEY = "udhaar-khata-last-backup-at";
+
+/** ISO timestamp of the last full-backup download, or null if never. */
+export function getLastBackupAt(): string | null {
+  try {
+    const raw = window.localStorage.getItem(BACKUP_STAMP_KEY);
+    if (!raw) return null;
+    const t = new Date(raw).getTime();
+    return Number.isNaN(t) ? null : new Date(t).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+/** Record that a backup was downloaded right now (called from the download click). */
+export function stampBackupNow(): void {
+  try {
+    window.localStorage.setItem(BACKUP_STAMP_KEY, new Date().toISOString());
+  } catch {
+    // storage blocked — the nudge is a nicety, not a requirement
+  }
+}
+
+/** Whole days since the last backup (9999 when never backed up). */
+export function daysSinceBackup(): number {
+  const iso = getLastBackupAt();
+  if (!iso) return 9999;
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}

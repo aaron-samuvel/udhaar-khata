@@ -81,6 +81,7 @@ model Settings {
   shopName         String   @default("My Shop")
   overdueDays      Int      @default(7) // dues older than this are included in reminder runs
   reminderTemplate String   @default("Namaste {name} ji, aapka udhaar Rs {amount} pending hai. Kripya jald payment kar dein. Dhanyavaad! — {shop}")
+  upiId            String? // shop's UPI VPA (e.g. shop@upi) — enables one-tap pay links in reminders
   demoData         Boolean  @default(true) // true while the ledger holds seeded demonstration data
   updatedAt        DateTime @updatedAt
 }

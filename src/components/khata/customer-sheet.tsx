@@ -28,10 +28,25 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, MessageCircle, ReceiptText, Undo2 } from "lucide-react";
+import {
+  Copy,
+  IndianRupee,
+  Loader2,
+  MessageCircle,
+  ReceiptText,
+  Undo2,
+  Wallet,
+} from "lucide-react";
 import { formatINR } from "@/lib/format";
 import type { CustomerPublic, TxnPublic } from "@/lib/types";
-import { errOf, khataFetch, khataPost } from "./api";
+import {
+  copyText,
+  errOf,
+  khataFetch,
+  khataPost,
+  openWhatsApp,
+  upiLinkClient,
+} from "./api";
 import { EmptyState, SkeletonRows, TxnLine } from "./txn-line";
 
 export function CustomerSheet({
@@ -59,6 +74,10 @@ export function CustomerSheet({
   const [sendingStatement, setSendingStatement] = useState(false);
   const [reversing, setReversing] = useState<TxnPublic | null>(null);
   const [reversingBusy, setReversingBusy] = useState(false);
+  const [settleOpen, setSettleOpen] = useState(false);
+  const [settling, setSettling] = useState(false);
+  /** Shop's UPI VPA (from Settings) — null hides the pay-link actions. */
+  const [upiId, setUpiId] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
     if (!nameKey) return;
@@ -89,11 +108,18 @@ export function CustomerSheet({
   useEffect(() => {
     if (open && nameKey) {
       void loadDetail();
+      // Fetch shop settings for the UPI pay-link actions (cheap, cached row).
+      void khataFetch<{ ok: boolean; settings?: { upiId: string | null } }>("/api/settings")
+        .then((r) => {
+          setUpiId(r.ok && r.data.settings?.upiId ? r.data.settings.upiId : null);
+        })
+        .catch(() => setUpiId(null));
     }
     if (!open) {
       setCustomer(null);
       setTransactions([]);
       setError("");
+      setSettleOpen(false);
     }
   }, [open, nameKey, loadDetail]);
 
@@ -128,16 +154,27 @@ export function CustomerSheet({
     if (!customer) return;
     setSendingReminder(true);
     try {
-      const result = await khataPost<{ ok: boolean; reminder?: { whatsappUrl: string } }>(
-        "/api/reminders/customer",
-        { name: customer.name }
-      );
+      const result = await khataPost<{
+        ok: boolean;
+        reminder?: { whatsappUrl: string; message: string };
+      }>("/api/reminders/customer", { name: customer.name });
       if (result.status === 201 && result.data.reminder) {
-        toast({
-          title: "Reminder ready",
-          description: "WhatsApp opened with the reminder message.",
-        });
-        window.open(result.data.reminder.whatsappUrl, "_blank", "noopener,noreferrer");
+        const { whatsappUrl, message } = result.data.reminder;
+        if (openWhatsApp(whatsappUrl)) {
+          toast({
+            title: "Reminder ready",
+            description: "WhatsApp opened with the reminder message.",
+          });
+        } else {
+          // Popup blocked — copy the message so nothing is silently lost.
+          const copied = await copyText(message);
+          toast({
+            title: "Pop-up blocked — text copied",
+            description: copied
+              ? "The reminder text is on your clipboard. Paste it into any WhatsApp chat."
+              : "Allow pop-ups for this site and try again.",
+          });
+        }
         onMutated();
       } else {
         toast({
@@ -155,33 +192,56 @@ export function CustomerSheet({
 
   /** WhatsApp-ready statement (last ledger lines + balance) — works even
    *  for settled customers, so it doubles as a receipt. */
-  const sendStatement = useCallback(async () => {
-    if (!customer) return;
-    setSendingStatement(true);
-    try {
-      const result = await khataPost<{
-        ok: boolean;
-        statement?: { whatsappUrl: string; lines: number };
-      }>(`/api/customers/${encodeURIComponent(customer.nameKey)}/statement`, {});
-      if (result.status === 201 && result.data.statement) {
-        toast({
-          title: "Statement ready",
-          description: `${result.data.statement.lines} ledger line(s) — WhatsApp opened with the message.`,
-        });
-        window.open(result.data.statement.whatsappUrl, "_blank", "noopener,noreferrer");
-      } else {
-        toast({
-          title: "No statement sent",
-          description: errOf(result, "Could not build the statement."),
-          variant: "destructive",
-        });
+  const sendStatement = useCallback(
+    async (action: "open" | "copy") => {
+      if (!customer) return;
+      setSendingStatement(true);
+      try {
+        const result = await khataPost<{
+          ok: boolean;
+          statement?: { whatsappUrl: string; message: string; lines: number };
+        }>(`/api/customers/${encodeURIComponent(customer.nameKey)}/statement`, {});
+        if (result.status === 201 && result.data.statement) {
+          const { whatsappUrl, message, lines } = result.data.statement;
+          if (action === "copy") {
+            const copied = await copyText(message);
+            toast({
+              title: copied ? "Statement copied" : "Could not copy",
+              description: copied
+                ? `${lines} ledger line(s) — paste it into any chat or notes app.`
+                : "Clipboard access was blocked by the browser.",
+            });
+            return;
+          }
+          if (openWhatsApp(whatsappUrl)) {
+            toast({
+              title: "Statement ready",
+              description: `${lines} ledger line(s) — WhatsApp opened with the message.`,
+            });
+          } else {
+            const copied = await copyText(message);
+            toast({
+              title: "Pop-up blocked — text copied",
+              description: copied
+                ? "The statement text is on your clipboard. Paste it into any WhatsApp chat."
+                : "Allow pop-ups for this site and try again.",
+            });
+          }
+        } else {
+          toast({
+            title: "No statement sent",
+            description: errOf(result, "Could not build the statement."),
+            variant: "destructive",
+          });
+        }
+      } catch (e) {
+        toast({ title: "No statement sent", description: (e as Error).message, variant: "destructive" });
+      } finally {
+        setSendingStatement(false);
       }
-    } catch (e) {
-      toast({ title: "No statement sent", description: (e as Error).message, variant: "destructive" });
-    } finally {
-      setSendingStatement(false);
-    }
-  }, [customer, toast]);
+    },
+    [customer, toast]
+  );
 
   const confirmReverse = useCallback(async () => {
     if (!reversing) return;
@@ -203,7 +263,50 @@ export function CustomerSheet({
     }
   }, [reversing, toast, loadDetail, onMutated]);
 
+  /** One-tap settle: record a PAYMENT for the exact outstanding balance.
+   *  force:true is safe here — the confirm dialog IS the explicit user intent,
+   *  and a settle of the full balance cannot collide with a partial payment. */
+  const settleFull = useCallback(async () => {
+    if (!customer || customer.balancePaise <= 0) return;
+    setSettling(true);
+    try {
+      const result = await khataPost<{
+        ok: boolean;
+        error?: string;
+        transaction?: { amountPaise: number };
+        customer?: { name: string; balancePaise: number };
+      }>("/api/transactions", {
+        mode: "manual",
+        customer: customer.name,
+        amountRupees: customer.balancePaise / 100,
+        txnType: "PAYMENT",
+        note: "Full balance settled (one-tap)",
+        force: true,
+      });
+      if (!result.ok || !result.data.transaction) {
+        toast({ title: "Could not record settlement", description: errOf(result), variant: "destructive" });
+        return;
+      }
+      const newBalance = result.data.customer?.balancePaise ?? 0;
+      toast({
+        title: "Khata settled",
+        description: `${customer.name} paid ${formatINR(customer.balancePaise)}. Balance is now ${formatINR(newBalance)}.`,
+      });
+      setSettleOpen(false);
+      await loadDetail();
+      onMutated();
+    } catch (e) {
+      toast({ title: "Could not record settlement", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSettling(false);
+    }
+  }, [customer, toast, loadDetail, onMutated]);
+
   const isDue = (customer?.balancePaise ?? 0) > 0;
+  const upiHref =
+    customer && isDue && upiId
+      ? upiLinkClient(upiId, customer.name, customer.balancePaise, `Udhaar ${customer.name}`)
+      : null;
 
   return (
     <>
@@ -301,6 +404,17 @@ export function CustomerSheet({
                   Quick actions
                 </h3>
                 <div className="flex flex-wrap gap-2">
+                  {isDue && (
+                    <Button
+                      type="button"
+                      onClick={() => setSettleOpen(true)}
+                      className="bg-[#0f5c4c] text-white hover:bg-[#0a3f35]"
+                      aria-label={`Record full payment of ${formatINR(customer.balancePaise)} from ${customer.name}`}
+                    >
+                      <Wallet className="size-4" aria-hidden="true" />
+                      Settle full balance
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     disabled={sendingReminder}
@@ -319,7 +433,7 @@ export function CustomerSheet({
                     type="button"
                     variant="outline"
                     disabled={sendingStatement}
-                    onClick={sendStatement}
+                    onClick={() => void sendStatement("open")}
                     className="border-[#128c7e] text-[#128c7e] hover:bg-[#128c7e]/10"
                     aria-label={`Send WhatsApp statement to ${customer.name}`}
                   >
@@ -330,6 +444,33 @@ export function CustomerSheet({
                     )}
                     Send statement
                   </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={sendingStatement}
+                    onClick={() => void sendStatement("copy")}
+                    className="text-[#5c6b62] hover:bg-[#efe4d2]"
+                    aria-label="Copy statement text to clipboard"
+                    title="Copy statement text"
+                  >
+                    <Copy className="size-4" aria-hidden="true" />
+                  </Button>
+                  {upiHref && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        window.location.href = upiHref;
+                      }}
+                      className="border-[#c56a16] text-[#c56a16] hover:bg-[#c56a16]/10"
+                      aria-label={`Collect ${formatINR(customer.balancePaise)} from ${customer.name} via UPI`}
+                      title="Opens the customer's UPI app with the amount pre-filled (on mobile)"
+                    >
+                      <IndianRupee className="size-4" aria-hidden="true" />
+                      Pay via UPI
+                    </Button>
+                  )}
                 </div>
               </section>
 
@@ -389,6 +530,46 @@ export function CustomerSheet({
               )}
               <Undo2 className="size-4" aria-hidden="true" />
               Reverse entry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* settle-up confirmation */}
+      <AlertDialog
+        open={settleOpen}
+        onOpenChange={(open) => {
+          if (!open) setSettleOpen(false);
+        }}
+      >
+        <AlertDialogContent className="khata-card max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-serif-khata text-[#1c261f]">
+              Record full payment?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[#5c6b62]">
+              This records a payment of{" "}
+              <span className="font-bold text-[#0f5c4c]">
+                {customer ? formatINR(customer.balancePaise) : ""}
+              </span>{" "}
+              from {customer?.name} and brings the balance to ₹0.00. The payment line
+              stays in the ledger like any other entry.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#e2d5c0] text-[#5c6b62]">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#0f5c4c] text-white hover:bg-[#0a3f35]"
+              onClick={settleFull}
+              disabled={settling}
+            >
+              {settling && (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              )}
+              <Wallet className="size-4" aria-hidden="true" />
+              Record payment
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

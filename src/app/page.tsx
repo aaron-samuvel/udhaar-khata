@@ -8,15 +8,26 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpenText, Users, BarChart3, Settings2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { BookOpenText, Users, BarChart3, Settings2, Download } from "lucide-react";
 import type { CustomerPublic, ReportsResponse, SettingsPublic } from "@/lib/types";
-import { errOf, khataFetch } from "@/components/khata/api";
+import { istDayKey } from "@/lib/format";
+import { errOf, khataFetch, khataPost } from "@/components/khata/api";
 import { KhataTab } from "@/components/khata/tabs/khata-tab";
 import { CustomersTab } from "@/components/khata/tabs/customers-tab";
 import { ReportsTab } from "@/components/khata/tabs/reports-tab";
 import { SettingsTab } from "@/components/khata/tabs/settings-tab";
 
+/** localStorage key guarding the once-per-IST-day reminder sweep. */
+const SWEEP_KEY = "udhaar-khata-last-sweep-day";
+
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
 export default function Home() {
+  const { toast } = useToast();
   const [tab, setTab] = useState("khata");
   const [customers, setCustomers] = useState<CustomerPublic[]>([]);
   const [todayReport, setTodayReport] = useState<ReportsResponse | null>(null);
@@ -24,6 +35,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [demoDismissed, setDemoDismissed] = useState(false);
+  const [installEvent, setInstallEvent] = useState<InstallPromptEvent | null>(null);
 
   /**
    * The one data-loading function: fetches customers + today's report + settings
@@ -85,6 +97,53 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [refreshAll]);
 
+  /* ---------- morning dues sweep (cron alternative) ----------
+   * The sandbox / simple deployments have no server-side scheduler, so the
+   * sweep runs once per IST day on the first app open. It only REFRESHES
+   * reminder records (new wa.me links with today's balances) — no customer
+   * data is created or modified. Failures stay silent: the manual reminder
+   * buttons on the Khata tab always work. */
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const today = istDayKey(new Date());
+        if (window.localStorage.getItem(SWEEP_KEY) === today) return;
+        void khataPost<{ ok: boolean; reminders_written?: number }>("/api/reminders/run", {})
+          .then((r) => {
+            window.localStorage.setItem(SWEEP_KEY, today);
+            const n = r.ok ? (r.data.reminders_written ?? 0) : 0;
+            if (n > 0) {
+              toast({
+                title: "Morning dues sweep",
+                description: `${n} customer${n === 1 ? "" : "s"} have dues older than your reminder threshold — fresh WhatsApp links are on the Khata tab.`,
+              });
+            }
+          })
+          .catch(() => {
+            // network hiccup — will retry on the next open (key not stamped)
+          });
+      } catch {
+        // localStorage blocked — sweep silently skipped
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  /* ---------- PWA install prompt ---------- */
+  useEffect(() => {
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setInstallEvent(e as InstallPromptEvent);
+    };
+    const onInstalled = () => setInstallEvent(null);
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
   const tabTriggerClass =
     "gap-2 rounded-none border-b-2 border-transparent bg-transparent px-3 sm:px-5 " +
     "text-[#5c6b62] font-semibold min-w-[88px] " +
@@ -110,6 +169,21 @@ export default function Home() {
               >
                 {settings.shopName}
               </span>
+            )}
+            {installEvent && (
+              <button
+                type="button"
+                onClick={() => {
+                  const ev = installEvent;
+                  setInstallEvent(null);
+                  void ev.prompt();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25 transition-colors"
+                aria-label="Install Udhaar Khata app on this device"
+              >
+                <Download className="size-3.5" aria-hidden="true" />
+                Install app
+              </button>
             )}
           </div>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed opacity-90">

@@ -133,6 +133,27 @@ export function KhataTab({
     if (voice.error) setStatus({ msg: voice.error, kind: "error" });
   }, [voice.error]);
 
+  /* ---------- "/" shortcut jumps to the entry box (desktop speed) ---------- */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      ) {
+        return; // already typing somewhere — don't hijack
+      }
+      e.preventDefault();
+      document.getElementById("entry-sentence")?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /* ---------- summary stats ---------- */
   const totalOutstandingPaise = customers.reduce(
     (sum, c) => sum + Math.max(0, c.balancePaise),
@@ -429,10 +450,12 @@ export function KhataTab({
             <div className="mt-4 space-y-3">
               <div className="flex gap-2">
                 <Input
+                  id="entry-sentence"
                   value={sentence}
                   onChange={(e) => setSentence(e.target.value)}
                   placeholder="e.g. Ramesh took 2 kg rice for 120 rupees"
                   aria-label="Entry sentence"
+                  aria-keyshortcuts="/"
                   className="bg-white border-[#e2d5c0]"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") checkEntry();
@@ -468,7 +491,7 @@ export function KhataTab({
                 </Button>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {EXAMPLE_SENTENCES.map((example) => (
                   <button
                     key={example}
@@ -480,6 +503,13 @@ export function KhataTab({
                     {example}
                   </button>
                 ))}
+                <span className="hidden sm:inline text-xs text-[#5c6b62]/70">
+                  Tip: press{" "}
+                  <kbd className="rounded border border-[#e2d5c0] bg-white px-1 py-0.5 text-[10px] font-semibold">
+                    /
+                  </kbd>{" "}
+                  to jump here
+                </span>
               </div>
 
               {voice.listening && (

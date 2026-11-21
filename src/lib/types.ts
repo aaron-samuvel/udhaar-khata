@@ -50,6 +50,8 @@ export interface SettingsPublic {
   shopName: string;
   overdueDays: number;
   reminderTemplate: string;
+  /** Shop's UPI VPA — when set, reminders/statements carry a one-tap pay link. */
+  upiId: string | null;
   demoData: boolean;
 }
 
