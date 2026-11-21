@@ -7,48 +7,80 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// A customer of the kirana shop with a running udhaar (credit) balance.
+// A customer of the shop with a running udhaar (credit) balance.
+// NOTE: all money is stored as INTEGER PAISE (1 rupee = 100 paise) so that
+// balance arithmetic is exact — never binary floating point.
 model Customer {
-  nameKey     String    @id // normalized uppercase name, used as the stable key
-  name        String
-  balance     Float     @default(0)
-  phone       String?
-  firstDueAt  DateTime? // when the current outstanding cycle started
-  lastTxnAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  nameKey      String       @id // normalized uppercase name, stable key
+  name         String
+  balancePaise Int          @default(0)
+  phone        String?
+  notes        String? // shopkeeper's private note about the customer
+  firstDueAt   DateTime? // when the current outstanding cycle started
+  lastTxnAt    DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
   transactions Transaction[]
 
-  @@index([balance])
+  @@index([balancePaise])
 }
 
-// An immutable ledger line: either UDHAAR (credit given) or PAYMENT (cash received).
+// An immutable ledger line: UDHAAR (credit given) or PAYMENT (cash received).
+// A reversal is a NEW offsetting line (isReversal=true) — originals are never
+// deleted or mutated in place, which keeps the audit history intact.
 model Transaction {
-  id        String   @id @default(cuid())
-  nameKey   String
-  name      String
-  amount    Float
-  txnType   String // "UDHAAR" | "PAYMENT"
-  rawText   String
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  nameKey      String
+  name         String
+  amountPaise  Int
+  txnType      String // "UDHAAR" | "PAYMENT"
+  rawText      String // the sentence the shopkeeper said/typed, or manual-entry label
+  note         String?
+  reversed     Boolean  @default(false) // true when this line was voided by a reversal
+  isReversal   Boolean  @default(false) // true when this line IS a reversal correction
+  reversedById String?
+  createdAt    DateTime @default(now())
 
   customer Customer @relation(fields: [nameKey], references: [nameKey])
 
   @@index([nameKey, createdAt])
+  @@index([createdAt])
 }
 
 // A reminder record produced by a reminder run, with a ready WhatsApp link.
 model Reminder {
-  id           String   @id @default(cuid())
-  nameKey      String
-  name         String
-  balance      Float
-  daysOverdue  Int
-  phone        String?
-  whatsappUrl  String
-  message      String
-  runId        String
-  createdAt    DateTime @default(now())
+  id          String   @id @default(cuid())
+  nameKey     String
+  name        String
+  balancePaise Int
+  daysOverdue Int
+  phone       String?
+  whatsappUrl String
+  message     String
+  runId       String
+  createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// Append-only audit trail for financially significant actions.
+model AuditEvent {
+  id        String   @id @default(cuid())
+  action    String // transaction_create | transaction_reverse | update_customer | settings_update | demo_reset
+  entity    String // transaction | customer | settings
+  entityId  String?
+  data      String // JSON payload (no secrets)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// Single-row shop settings.
+model Settings {
+  id               String   @id @default("singleton")
+  shopName         String   @default("My Shop")
+  overdueDays      Int      @default(7) // dues older than this are included in reminder runs
+  reminderTemplate String   @default("Namaste {name} ji, aapka udhaar Rs {amount} pending hai. Kripya jald payment kar dein. Dhanyavaad! — {shop}")
+  demoData         Boolean  @default(true) // true while the ledger holds seeded demonstration data
+  updatedAt        DateTime @updatedAt
 }
