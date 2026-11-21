@@ -155,6 +155,9 @@ export function publicCustomer(c: Customer): CustomerPublic {
     balancePaise: c.balancePaise,
     phone: c.phone,
     notes: c.notes,
+    creditLimitPaise: c.creditLimitPaise ?? null,
+    creditLimit: c.creditLimitPaise != null ? c.creditLimitPaise / 100 : null,
+    archived: c.archived,
     firstDueAt: c.firstDueAt?.toISOString() ?? null,
     lastTxnAt: c.lastTxnAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
@@ -229,7 +232,13 @@ export interface AddTxnInput {
 
 export async function addTransaction(
   input: AddTxnInput
-): Promise<{ transaction: TxnPublic; customer: CustomerPublic; duplicate?: TxnPublic }> {
+): Promise<{
+  transaction: TxnPublic;
+  customer: CustomerPublic;
+  duplicate?: TxnPublic;
+  /** set when a UDHAAR pushed the balance past the customer's credit cap */
+  overLimit?: { creditLimitPaise: number; balanceAfterPaise: number };
+}> {
   if (!Number.isInteger(input.amountPaise) || input.amountPaise <= 0) {
     throw new Error("Amount must be greater than zero.");
   }
@@ -241,6 +250,15 @@ export async function addTransaction(
   }
 
   const existing = await db.customer.findUnique({ where: { nameKey: key } });
+
+  // Archived customers are out of active business — the shopkeeper must
+  // explicitly unarchive them (one tap in the Customers tab) before new
+  // entries land, otherwise money could hide inside an archived khata.
+  if (existing?.archived) {
+    throw new Error(
+      `${existing.name} is archived. Unarchive them from the Customers tab before adding entries.`
+    );
+  }
 
   if (!input.force && !input.isReversal) {
     const dupe = await db.transaction.findFirst({
@@ -274,6 +292,16 @@ export async function addTransaction(
 
   const displayName = existing?.name ?? input.customer.trim();
   const savedPhone = phone ?? existing?.phone ?? null;
+
+  // Credit-limit advisory: fires when a udhaar pushes the balance past the
+  // customer's optional cap. The entry is still saved — the shopkeeper makes
+  // the final call, the app just makes sure the limit is visible.
+  const overLimit =
+    input.txnType === "UDHAAR" &&
+    existing?.creditLimitPaise != null &&
+    newBalance > existing.creditLimitPaise
+      ? { creditLimitPaise: existing.creditLimitPaise, balanceAfterPaise: newBalance }
+      : undefined;
 
   const txn = await db.$transaction(async (tx) => {
     await tx.customer.upsert({
@@ -325,7 +353,11 @@ export async function addTransaction(
   });
 
   const cust = (await db.customer.findUnique({ where: { nameKey: key } }))!;
-  return { transaction: publicTxn(txn), customer: publicCustomer(cust) };
+  return {
+    transaction: publicTxn(txn),
+    customer: publicCustomer(cust),
+    ...(overLimit ? { overLimit } : {}),
+  };
 }
 
 function publicTxnAsCustomer(t: Transaction): CustomerPublic {
@@ -336,6 +368,9 @@ function publicTxnAsCustomer(t: Transaction): CustomerPublic {
     balancePaise: 0,
     phone: null,
     notes: null,
+    creditLimitPaise: null,
+    creditLimit: null,
+    archived: false,
     firstDueAt: null,
     lastTxnAt: t.createdAt.toISOString(),
     createdAt: t.createdAt.toISOString(),
@@ -411,9 +446,15 @@ export async function reverseTransaction(id: string) {
 
 /* ---------------- customers ---------------- */
 
-export async function listCustomers(q?: string): Promise<CustomerPublic[]> {
+export async function listCustomers(
+  q?: string,
+  onlyArchived = false
+): Promise<CustomerPublic[]> {
   const rows = await db.customer.findMany({
-    where: q ? { name: { contains: q } } : undefined,
+    where: {
+      archived: onlyArchived,
+      ...(q ? { name: { contains: q } } : {}),
+    },
   });
   return rows
     .map(publicCustomer)
@@ -434,13 +475,23 @@ export async function getCustomerWithTxns(name: string) {
 
 export async function updateCustomer(
   name: string,
-  patch: { phone?: string | null; notes?: string | null }
+  patch: {
+    phone?: string | null;
+    notes?: string | null;
+    creditLimitRupees?: number | null;
+    archived?: boolean;
+  }
 ): Promise<CustomerPublic | null> {
   const key = nameKey(name);
   const existing = await db.customer.findUnique({ where: { nameKey: key } });
   if (!existing) return null;
 
-  const data: { phone?: string | null; notes?: string | null } = {};
+  const data: {
+    phone?: string | null;
+    notes?: string | null;
+    creditLimitPaise?: number | null;
+    archived?: boolean;
+  } = {};
   if (patch.phone !== undefined) {
     if (patch.phone === null || patch.phone === "") {
       data.phone = null;
@@ -454,6 +505,27 @@ export async function updateCustomer(
     const notes = patch.notes === null ? null : patch.notes.trim();
     data.notes = notes === "" ? null : notes;
   }
+  if (patch.creditLimitRupees !== undefined) {
+    if (patch.creditLimitRupees === null) {
+      data.creditLimitPaise = null;
+    } else if (
+      !Number.isFinite(patch.creditLimitRupees) ||
+      patch.creditLimitRupees < 0 ||
+      patch.creditLimitRupees > RUPEE_MAX
+    ) {
+      throw new Error(`Credit limit must be between 0 and ${RUPEE_MAX}.`);
+    } else {
+      data.creditLimitPaise = Math.round(patch.creditLimitRupees * 100);
+    }
+  }
+  if (patch.archived !== undefined) {
+    // Archiving hides a customer from the active lists; only allowed when the
+    // khata is settled so outstanding money can never be archived away.
+    if (patch.archived && existing.balancePaise > 0) {
+      throw new Error("Only customers with a settled (zero) balance can be archived.");
+    }
+    data.archived = patch.archived;
+  }
 
   const updated = await db.$transaction(async (tx) => {
     const row = await tx.customer.update({ where: { nameKey: key }, data });
@@ -465,6 +537,8 @@ export async function updateCustomer(
         data: JSON.stringify({
           phoneChanged: patch.phone !== undefined,
           notesChanged: patch.notes !== undefined,
+          creditLimitChanged: patch.creditLimitRupees !== undefined,
+          archivedChanged: patch.archived !== undefined,
         }),
       },
     });
@@ -517,6 +591,7 @@ export async function writeReminders(overdueDays?: number): Promise<ReminderPubl
   const written: ReminderPublic[] = [];
 
   for (const c of await db.customer.findMany()) {
+    if (c.archived) continue; // archived customers are out of active collection
     if (c.balancePaise <= 0) continue;
     const dueFrom = c.firstDueAt ?? c.lastTxnAt;
     const age = daysSince(dueFrom);
@@ -724,13 +799,15 @@ export async function getReports(
   }
 
   const customers = await db.customer.findMany();
-  const customerOutstanding = customers
+  const active = customers.filter((c) => !c.archived);
+  const customerOutstanding = active
     .filter((c) => c.balancePaise > 0)
     .map((c) => ({
       name: c.name,
       phone: c.phone,
       balance: c.balancePaise / 100,
       balancePaise: c.balancePaise,
+      creditLimitPaise: c.creditLimitPaise,
       daysDue: daysSince(c.firstDueAt ?? c.lastTxnAt),
       notes: c.notes,
     }))
@@ -750,9 +827,9 @@ export async function getReports(
     customerOutstanding,
     recent: txns.slice(0, 10).map(publicTxn),
     meta: {
-      customers: customers.length,
-      withDues: customers.filter((c) => c.balancePaise > 0).length,
-      settled: customers.filter((c) => c.balancePaise <= 0).length,
+      customers: active.length,
+      withDues: active.filter((c) => c.balancePaise > 0).length,
+      settled: active.filter((c) => c.balancePaise <= 0).length,
     },
   };
 }
@@ -788,14 +865,19 @@ export async function exportTransactionsCsv(): Promise<string> {
 
 export async function exportOutstandingCsv(): Promise<string> {
   const customers = await db.customer.findMany();
-  const lines = ["Customer,Phone,Balance (INR),Days Due,Notes"];
+  const lines = ["Customer,Phone,Balance (INR),Days Due,Credit Limit (INR),Over Limit,Archived,Notes"];
   for (const c of [...customers].sort((a, b) => b.balancePaise - a.balancePaise)) {
+    const overLimit =
+      c.creditLimitPaise != null && c.balancePaise > c.creditLimitPaise ? "YES" : "NO";
     lines.push(
       [
         c.name,
         c.phone ?? "",
         (c.balancePaise / 100).toFixed(2),
         c.balancePaise > 0 ? String(daysSince(c.firstDueAt ?? c.lastTxnAt)) : "0",
+        c.creditLimitPaise != null ? (c.creditLimitPaise / 100).toFixed(2) : "",
+        overLimit,
+        c.archived ? "YES" : "NO",
         c.notes ?? "",
       ]
         .map(csvEscape)
@@ -838,6 +920,8 @@ interface BackupCustomerInput {
   name: string;
   phone?: string | null;
   notes?: string | null;
+  creditLimitPaise?: number | null;
+  archived?: boolean;
 }
 
 interface BackupTxnInput {
@@ -914,6 +998,14 @@ export async function restoreBackup(
       name,
       phone: typeof c.phone === "string" ? normalizePhone(c.phone) : null,
       notes: typeof c.notes === "string" ? c.notes : null,
+      creditLimitPaise:
+        typeof c.creditLimitPaise === "number" &&
+        Number.isInteger(c.creditLimitPaise) &&
+        c.creditLimitPaise > 0 &&
+        c.creditLimitPaise <= RUPEE_MAX * 100
+          ? c.creditLimitPaise
+          : null,
+      archived: c.archived === true,
     });
   }
 
@@ -956,7 +1048,14 @@ export async function restoreBackup(
   const known = new Set(customers.map((c) => c.nameKey));
   for (const t of transactions) {
     if (!known.has(t.nameKey)) {
-      customers.push({ nameKey: t.nameKey, name: t.name, phone: null, notes: null });
+      customers.push({
+        nameKey: t.nameKey,
+        name: t.name,
+        phone: null,
+        notes: null,
+        creditLimitPaise: null,
+        archived: false,
+      });
       known.add(t.nameKey);
     }
   }
@@ -992,6 +1091,8 @@ export async function restoreBackup(
               name: c.name,
               phone: c.phone,
               notes: c.notes,
+              creditLimitPaise: c.creditLimitPaise ?? null,
+              archived: c.archived ?? false,
             })),
           });
         }
@@ -1002,6 +1103,8 @@ export async function restoreBackup(
             name: c.name,
             phone: c.phone,
             notes: c.notes,
+            creditLimitPaise: c.creditLimitPaise ?? null,
+            archived: c.archived ?? false,
           })),
         });
       }

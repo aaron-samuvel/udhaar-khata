@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { updateCustomer } from "@/lib/khata";
+import { RUPEE_MAX, updateCustomer } from "@/lib/khata";
 
 const patchSchema = z.object({
   phone: z.string().max(20).nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
+  creditLimitRupees: z.number().finite().min(0).max(RUPEE_MAX).nullable().optional(),
+  archived: z.boolean().optional(),
 });
 
 export async function PATCH(
@@ -22,7 +24,12 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    if (parsed.data.phone === undefined && parsed.data.notes === undefined) {
+    if (
+      parsed.data.phone === undefined &&
+      parsed.data.notes === undefined &&
+      parsed.data.creditLimitRupees === undefined &&
+      parsed.data.archived === undefined
+    ) {
       return NextResponse.json(
         { ok: false, error: "Nothing to update." },
         { status: 400 }

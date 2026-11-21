@@ -273,6 +273,7 @@ export function KhataTab({
           error?: string;
           transaction?: { amountPaise: number; txnType: string };
           customer?: { name: string; balancePaise: number };
+          overLimit?: { creditLimitPaise: number; balanceAfterPaise: number } | null;
         }>("/api/transactions", body);
 
         if (result.status === 409) {
@@ -296,6 +297,14 @@ export function KhataTab({
           title: verb === "payment" ? "Payment recorded" : "Udhaar recorded",
           description: `${cust.name} · ${formatINR(txn.amountPaise)} · balance ${formatINR(cust.balancePaise)}`,
         });
+        if (result.data.overLimit) {
+          toast({
+            title: "Credit limit crossed",
+            description: `${cust.name}'s balance ${formatINR(
+              result.data.overLimit.balanceAfterPaise
+            )} is now above their ${formatINR(result.data.overLimit.creditLimitPaise)} limit.`,
+          });
+        }
         setSentence("");
         setConfirm(null);
         setManual(emptyEntry);

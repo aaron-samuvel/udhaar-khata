@@ -3,8 +3,11 @@ import { listCustomers } from "@/lib/khata";
 
 export async function GET(req: NextRequest) {
   try {
-    const q = req.nextUrl.searchParams.get("q")?.trim() || undefined;
-    const customers = await listCustomers(q);
+    const sp = req.nextUrl.searchParams;
+    const q = sp.get("q")?.trim() || undefined;
+    // ?archived=1 lists ONLY archived customers; default lists active ones.
+    const onlyArchived = sp.get("archived") === "1";
+    const customers = await listCustomers(q, onlyArchived);
     return NextResponse.json({ ok: true, customers });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Something went wrong.";

@@ -11,6 +11,12 @@ export interface CustomerPublic {
   balancePaise: number;
   phone: string | null;
   notes: string | null;
+  /** Optional per-customer credit cap in integer paise (null = no limit set). */
+  creditLimitPaise: number | null;
+  /** Credit cap in rupees (display convenience). */
+  creditLimit: number | null;
+  /** Archived customers are hidden from the active lists; settled-only rule. */
+  archived: boolean;
   firstDueAt: string | null;
   lastTxnAt: string | null;
   createdAt: string;
@@ -80,6 +86,8 @@ export interface ReportsResponse {
     phone: string | null;
     balance: number;
     balancePaise: number;
+    /** The customer's credit cap, when one is set (for over-limit badges). */
+    creditLimitPaise: number | null;
     daysDue: number;
     notes: string | null;
   }[];

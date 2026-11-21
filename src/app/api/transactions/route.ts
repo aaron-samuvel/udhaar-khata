@@ -128,7 +128,13 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { ok: true, transaction: result.transaction, customer: result.customer },
+      {
+        ok: true,
+        transaction: result.transaction,
+        customer: result.customer,
+        /** present when this udhaar crossed the customer's credit cap */
+        overLimit: result.overLimit ?? null,
+      },
       { status: 201 }
     );
   } catch (err) {

@@ -16,6 +16,8 @@ model Customer {
   balancePaise Int          @default(0)
   phone        String?
   notes        String? // shopkeeper's private note about the customer
+  creditLimitPaise Int? // optional per-customer credit cap; udhaar that crosses it triggers a warning (never blocks)
+  archived     Boolean      @default(false) // hidden from the active lists; only settled customers can be archived
   firstDueAt   DateTime? // when the current outstanding cycle started
   lastTxnAt    DateTime?
   createdAt    DateTime     @default(now())

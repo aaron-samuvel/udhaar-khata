@@ -246,23 +246,34 @@ export function ReportsTab() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {report!.customerOutstanding.map((row) => (
-                    <TableRow key={row.name}>
-                      <TableCell className="font-semibold text-[#1c261f]">
-                        {row.name}
-                      </TableCell>
-                      <TableCell className="text-[#5c6b62]">{row.phone ?? "—"}</TableCell>
-                      <TableCell className="text-right font-bold text-[#9b2c2c] tabular-nums">
-                        {formatINR(row.balancePaise)}
-                      </TableCell>
-                      <TableCell className="text-right text-[#5c6b62] tabular-nums">
-                        {row.daysDue}
-                      </TableCell>
-                      <TableCell className="text-[#5c6b62] max-w-40 truncate">
-                        {row.notes ?? "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {report!.customerOutstanding.map((row) => {
+                    const overLimit =
+                      row.creditLimitPaise != null && row.balancePaise > row.creditLimitPaise;
+                    return (
+                      <TableRow key={row.name}>
+                        <TableCell className="font-semibold text-[#1c261f]">
+                          <span className="inline-flex items-center gap-1.5">
+                            {row.name}
+                            {overLimit && (
+                              <span className="rounded-full bg-[#fde8d0] px-2 py-0.5 text-[10px] font-bold text-[#c56a16]">
+                                Over limit
+                              </span>
+                            )}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-[#5c6b62]">{row.phone ?? "—"}</TableCell>
+                        <TableCell className="text-right font-bold text-[#9b2c2c] tabular-nums">
+                          {formatINR(row.balancePaise)}
+                        </TableCell>
+                        <TableCell className="text-right text-[#5c6b62] tabular-nums">
+                          {row.daysDue}
+                        </TableCell>
+                        <TableCell className="text-[#5c6b62] max-w-40 truncate">
+                          {row.notes ?? "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

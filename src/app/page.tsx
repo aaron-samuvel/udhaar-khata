@@ -108,7 +108,7 @@ export default function Home() {
       try {
         const today = istDayKey(new Date());
         if (window.localStorage.getItem(SWEEP_KEY) === today) return;
-        void khataPost<{ ok: boolean; reminders_written?: number }>("/api/reminders/run", {})
+        void khataPost<{ ok: boolean; reminders_written?: number }>("/api/reminders", {})
           .then((r) => {
             window.localStorage.setItem(SWEEP_KEY, today);
             const n = r.ok ? (r.data.reminders_written ?? 0) : 0;

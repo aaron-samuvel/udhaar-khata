@@ -29,6 +29,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
+  Archive,
+  ArchiveRestore,
   Copy,
   IndianRupee,
   Loader2,
@@ -69,7 +71,11 @@ export function CustomerSheet({
   const [error, setError] = useState("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
+  /** Credit limit in rupees as typed ("" = no limit). Saved with the profile. */
+  const [creditLimit, setCreditLimit] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [sendingStatement, setSendingStatement] = useState(false);
   const [reversing, setReversing] = useState<TxnPublic | null>(null);
@@ -98,6 +104,11 @@ export function CustomerSheet({
       setTransactions(result.data.transactions ?? []);
       setPhone(result.data.customer.phone ?? "");
       setNotes(result.data.customer.notes ?? "");
+      setCreditLimit(
+        result.data.customer.creditLimitPaise != null
+          ? String(result.data.customer.creditLimitPaise / 100)
+          : ""
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -120,11 +131,27 @@ export function CustomerSheet({
       setTransactions([]);
       setError("");
       setSettleOpen(false);
+      setArchiveOpen(false);
+      setCreditLimit("");
     }
   }, [open, nameKey, loadDetail]);
 
   const saveProfile = useCallback(async () => {
     if (!nameKey) return;
+    // Credit limit: blank clears the cap; otherwise it must be a valid amount.
+    let creditLimitRupees: number | null = null;
+    const limitText = creditLimit.trim();
+    if (limitText !== "") {
+      creditLimitRupees = Number.parseFloat(limitText);
+      if (!Number.isFinite(creditLimitRupees) || creditLimitRupees < 0) {
+        toast({
+          title: "Invalid credit limit",
+          description: "Use a number of rupees (0 or more), or leave it blank.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     setSavingProfile(true);
     try {
       const result = await khataFetch<{
@@ -134,21 +161,31 @@ export function CustomerSheet({
       }>(`/api/customers/${encodeURIComponent(nameKey)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ phone: phone.trim(), notes: notes.trim() }),
+        body: JSON.stringify({
+          phone: phone.trim(),
+          notes: notes.trim(),
+          creditLimitRupees,
+        }),
       });
       if (!result.ok || !result.data.customer) {
         toast({ title: "Could not save profile", description: errOf(result), variant: "destructive" });
         return;
       }
       setCustomer(result.data.customer);
-      toast({ title: "Profile saved", description: `${result.data.customer.name}'s details updated.` });
+      toast({
+        title: "Profile saved",
+        description:
+          creditLimitRupees === null
+            ? `${result.data.customer.name}'s details updated — no credit limit.`
+            : `${result.data.customer.name}'s details updated — credit limit ${formatINR(Math.round(creditLimitRupees * 100))}.`,
+      });
       onMutated();
     } catch (e) {
       toast({ title: "Could not save profile", description: (e as Error).message, variant: "destructive" });
     } finally {
       setSavingProfile(false);
     }
-  }, [nameKey, phone, notes, toast, onMutated]);
+  }, [nameKey, phone, notes, creditLimit, toast, onMutated]);
 
   const sendReminder = useCallback(async () => {
     if (!customer) return;
@@ -307,6 +344,54 @@ export function CustomerSheet({
     customer && isDue && upiId
       ? upiLinkClient(upiId, customer.name, customer.balancePaise, `Udhaar ${customer.name}`)
       : null;
+  const overLimit =
+    customer != null &&
+    customer.creditLimitPaise != null &&
+    customer.balancePaise > customer.creditLimitPaise;
+
+  /** Archive (settled customers only — enforced server-side) or unarchive. */
+  const setArchived = useCallback(
+    async (value: boolean) => {
+      if (!nameKey) return;
+      setArchiving(true);
+      try {
+        const result = await khataFetch<{ ok: boolean; error?: string }>(
+          `/api/customers/${encodeURIComponent(nameKey)}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ archived: value }),
+          }
+        );
+        if (!result.ok) {
+          toast({
+            title: value ? "Could not archive" : "Could not unarchive",
+            description: errOf(result),
+            variant: "destructive",
+          });
+          return;
+        }
+        toast({
+          title: value ? "Customer archived" : "Customer unarchived",
+          description: value
+            ? "They are hidden from the active lists (Archived chip in the Customers tab)."
+            : "They are back in the active lists.",
+        });
+        setArchiveOpen(false);
+        await loadDetail();
+        onMutated();
+      } catch (e) {
+        toast({
+          title: value ? "Could not archive" : "Could not unarchive",
+          description: (e as Error).message,
+          variant: "destructive",
+        });
+      } finally {
+        setArchiving(false);
+      }
+    },
+    [nameKey, toast, loadDetail, onMutated]
+  );
 
   return (
     <>
@@ -335,6 +420,16 @@ export function CustomerSheet({
                     ? `Due ${formatINR(customer.balancePaise)}`
                     : `Settled ${formatINR(customer.balancePaise)}`}
                 </span>
+                {overLimit && (
+                  <span className="inline-flex items-center rounded-full bg-[#fde8d0] px-2.5 py-1 text-xs font-bold text-[#c56a16]">
+                    Over limit {formatINR(customer.creditLimitPaise!)}
+                  </span>
+                )}
+                {customer.archived && (
+                  <span className="inline-flex items-center rounded-full bg-[#e2d5c0] px-2.5 py-1 text-xs font-bold text-[#5c6b62]">
+                    Archived
+                  </span>
+                )}
                 {customer.phone && (
                   <span className="text-sm text-[#5c6b62]">{customer.phone}</span>
                 )}
@@ -371,6 +466,26 @@ export function CustomerSheet({
                       onChange={(e) => setPhone(e.target.value)}
                       className="bg-white border-[#e2d5c0]"
                     />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cust-credit-limit" className="text-sm">
+                      Credit limit (₹, optional)
+                    </Label>
+                    <Input
+                      id="cust-credit-limit"
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="0.01"
+                      value={creditLimit}
+                      placeholder="e.g. 500 — blank for no limit"
+                      onChange={(e) => setCreditLimit(e.target.value)}
+                      className="bg-white border-[#e2d5c0]"
+                    />
+                    <p className="text-xs text-[#5c6b62]">
+                      Udhaar that crosses this limit still saves — but you get a clear
+                      warning, and the customer is flagged everywhere.
+                    </p>
                   </div>
                   <div className="grid gap-1.5">
                     <Label htmlFor="cust-notes" className="text-sm">
@@ -471,6 +586,38 @@ export function CustomerSheet({
                       Pay via UPI
                     </Button>
                   )}
+                  {customer.archived ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={archiving}
+                      onClick={() => void setArchived(false)}
+                      className="border-[#e2d5c0] text-[#0f5c4c] hover:bg-[#0f5c4c]/10"
+                      aria-label={`Unarchive ${customer.name}`}
+                    >
+                      {archiving ? (
+                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <ArchiveRestore className="size-4" aria-hidden="true" />
+                      )}
+                      Unarchive customer
+                    </Button>
+                  ) : (
+                    !isDue && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={archiving}
+                        onClick={() => setArchiveOpen(true)}
+                        className="text-[#9b2c2c] hover:bg-[#9b2c2c]/10"
+                        aria-label={`Archive ${customer.name}`}
+                        title="Hidden from the active lists — only settled customers can be archived"
+                      >
+                        <Archive className="size-4" aria-hidden="true" />
+                        Archive customer
+                      </Button>
+                    )
+                  )}
                 </div>
               </section>
 
@@ -498,6 +645,43 @@ export function CustomerSheet({
           )}
         </SheetContent>
       </Sheet>
+
+      {/* archive confirmation */}
+      <AlertDialog
+        open={archiveOpen}
+        onOpenChange={(open) => {
+          if (!open) setArchiveOpen(false);
+        }}
+      >
+        <AlertDialogContent className="khata-card max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-serif-khata text-[#1c261f]">
+              Archive {customer?.name}?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[#5c6b62]">
+              They will be hidden from the active lists (find them under the
+              &ldquo;Archived&rdquo; chip in the Customers tab). Their ledger history is kept
+              forever, and you can unarchive them any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#e2d5c0] text-[#5c6b62]">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#9b2c2c] text-white hover:bg-[#7a231f]"
+              onClick={() => void setArchived(true)}
+              disabled={archiving}
+            >
+              {archiving && (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              )}
+              <Archive className="size-4" aria-hidden="true" />
+              Archive customer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* reverse confirmation */}
       <AlertDialog

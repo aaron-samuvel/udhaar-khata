@@ -14,7 +14,7 @@ import { daysSince, errOf, khataFetch, relTime } from "../api";
 import { EmptyState, SkeletonRows } from "../txn-line";
 import { CustomerSheet } from "../customer-sheet";
 
-type CustomerFilter = "all" | "due" | "settled";
+type CustomerFilter = "all" | "due" | "settled" | "archived";
 
 export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }) {
   const [query, setQuery] = useState("");
@@ -37,9 +37,13 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
     setLoading(true);
     setError("");
     try {
+      // The "Archived" chip swaps the fetch to the archived-only endpoint;
+      // all other chips read the active list and filter client-side.
+      const archivedOnly = filter === "archived";
+      const base = archivedOnly ? "/api/customers?archived=1" : "/api/customers";
       const url = debounced
-        ? `/api/customers?q=${encodeURIComponent(debounced)}`
-        : "/api/customers";
+        ? `${base}${archivedOnly ? "&" : "?"}q=${encodeURIComponent(debounced)}`
+        : base;
       const result = await khataFetch<{
         ok: boolean;
         error?: string;
@@ -55,7 +59,7 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
     } finally {
       setLoading(false);
     }
-  }, [debounced]);
+  }, [debounced, filter]);
 
   useEffect(() => {
     void load();
@@ -67,6 +71,7 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
   }, [load, refreshAll]);
 
   const visible = list.filter((c) => {
+    if (filter === "archived") return true; // the server already filtered
     if (filter === "due") return c.balancePaise > 0;
     if (filter === "settled") return c.balancePaise <= 0;
     return true;
@@ -132,6 +137,7 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
             {filterChip("all", "All")}
             {filterChip("due", "Due")}
             {filterChip("settled", "Settled")}
+            {filterChip("archived", "Archived")}
           </div>
         </div>
 
@@ -147,7 +153,9 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
               text={
                 query
                   ? "No customers match that search."
-                  : "No customers yet — record your first entry on the Khata tab."
+                  : filter === "archived"
+                    ? "No archived customers — settled customers can be archived from their khata sheet."
+                    : "No customers yet — record your first entry on the Khata tab."
               }
             />
           ) : (
@@ -155,6 +163,8 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
               {visible.map((c) => {
                 const due = c.balancePaise > 0;
                 const dueDays = daysSince(c.firstDueAt);
+                const overLimit =
+                  c.creditLimitPaise != null && c.balancePaise > c.creditLimitPaise;
                 return (
                   <li key={c.nameKey}>
                     <button
@@ -163,12 +173,26 @@ export function CustomersTab({ refreshAll }: { refreshAll: () => Promise<void> }
                         setSelected(c);
                         setSheetOpen(true);
                       }}
-                      className="w-full text-left px-2 py-3 rounded-xl hover:bg-[#efe4d2]/60 focus-visible:bg-[#efe4d2]/80 transition-colors border-b border-[#e2d5c0]/70 last:border-b-0"
+                      className={`w-full text-left px-2 py-3 rounded-xl hover:bg-[#efe4d2]/60 focus-visible:bg-[#efe4d2]/80 transition-colors border-b border-[#e2d5c0]/70 last:border-b-0 ${
+                        c.archived ? "opacity-70" : ""
+                      }`}
                       aria-label={`Open khata for ${c.name}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="font-bold text-[#1c261f] truncate">{c.name}</p>
+                          <p className="flex flex-wrap items-center gap-1.5 font-bold text-[#1c261f]">
+                            <span className="truncate">{c.name}</span>
+                            {c.archived && (
+                              <span className="rounded-full bg-[#e2d5c0] px-2 py-0.5 text-[10px] font-bold text-[#5c6b62]">
+                                Archived
+                              </span>
+                            )}
+                            {overLimit && (
+                              <span className="rounded-full bg-[#fde8d0] px-2 py-0.5 text-[10px] font-bold text-[#c56a16]">
+                                Over limit
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs text-[#5c6b62] mt-0.5 truncate">
                             {c.phone ? `${c.phone} · ` : ""}
                             {c.lastTxnAt ? `last entry ${relTime(c.lastTxnAt)}` : "no entries yet"}
