@@ -1,0 +1,47 @@
+name: Bug report
+description: Report something broken - a wrong parse, missing balance, or UI glitch
+labels: [bug]
+body:
+  - type: textarea
+    id: what-you-typed
+    attributes:
+      label: What did you type (or speak)?
+      description: The exact entry text, e.g. `Ramesh took 2 kg rice for 120 rupees`
+      placeholder: Ramesh took 2 kg rice for 120 rupees
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: Include the recorded customer/amount if an entry was created.
+    validations:
+      required: true
+  - type: dropdown
+    id: input-mode
+    attributes:
+      label: Input mode
+      options:
+        - Typed text
+        - Voice
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser/device, and whether you use the live demo or a self-hosted build
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshots
+      description: Optional - drag images here
