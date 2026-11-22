@@ -41,6 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 local-*
+!src/components/khata/local-server.ts
 .claude
 .z-ai-config
 *.log
