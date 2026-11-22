@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Live demo
+    url: https://aaron-samuvel.github.io/udhaar-khata/
+    about: Try the app first - data stays in your browser
+  - name: Questions & help
+    url: https://github.com/aaron-samuvel/udhaar-khata/discussions/categories/q-a
+    about: Ask usage questions in the Q&A discussion category
