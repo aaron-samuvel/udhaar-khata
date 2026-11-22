@@ -1,0 +1,22 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: "New features"
+    labels: ["enhancement", "feature"]
+  - title: "Bug fixes"
+    labels: ["bug", "data"]
+  - title: "Documentation"
+    labels: ["docs"]
+  - title: "Other changes"
+    labels: ["*"]
+version-resolver:
+  major:
+    labels: ["breaking"]
+  minor:
+    labels: ["enhancement", "feature"]
+  patch:
+    labels: ["bug", "docs"]
+  default: patch
+template: |
+  ## Changes
+  $CHANGES
