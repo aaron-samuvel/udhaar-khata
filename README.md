@@ -1,11 +1,20 @@
 # Udhaar Khata — Kirana Credit Ledger (Next.js Rebuild)
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-2ea44f?style=flat-square&logo=github&logoColor=white)](https://aaron-samuvel.github.io/udhaar-khata/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38bdf8?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![PWA](https://img.shields.io/badge/PWA-installable-5a0fc8?style=flat-square&logo=pwa&logoColor=white)](#offline-drafts--pwa)
+
 A digital *khata* (credit ledger) for small shop owners. Record udhaar (credit) and payments
 by typing plain English or Hinglish — or just by speaking. Track customer balances, send
 WhatsApp payment reminders with UPI collect links, and see daily reports at a glance.
 
 This is a full-stack rebuild of the original project (an AWS SAM serverless version,
 preserved in git history) as a modern Next.js application.
+
+> **Try it now** — the static demo runs entirely in your browser (data stays in your
+> browser's localStorage): **[aaron-samuvel.github.io/udhaar-khata](https://aaron-samuvel.github.io/udhaar-khata/)**
 
 ## Features
 
