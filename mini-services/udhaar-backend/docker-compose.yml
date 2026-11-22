@@ -1,0 +1,40 @@
+# Production: Spring Boot app + PostgreSQL. Scale with `docker compose up -d --scale app=N`
+# (stateless JWT — any replica serves any user; legacy-anonymous stays OFF here).
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: udhaar
+      POSTGRES_USER: udhaar
+      POSTGRES_PASSWORD: ${UDHAAR_DB_PASSWORD:-udhaar}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U udhaar -d udhaar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      UDHAAR_DB_HOST: db
+      UDHAAR_DB_PORT: 5432
+      UDHAAR_DB_NAME: udhaar
+      UDHAAR_DB_USER: udhaar
+      UDHAAR_DB_PASSWORD: ${UDHAAR_DB_PASSWORD:-udhaar}
+      UDHAAR_JWT_SECRET: ${UDHAAR_JWT_SECRET:?set a 32+ byte secret in .env}
+      UDHAAR_LEGACY_ANONYMOUS: ${UDHAAR_LEGACY_ANONYMOUS:-false}
+      UDHAAR_CORS_ORIGINS: ${UDHAAR_CORS_ORIGINS:-http://localhost:3000,https://aaron-samuvel.github.io}
+      JAVA_OPTS: -XX:MaxRAMPercentage=75 -XX:+UseZGC
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:

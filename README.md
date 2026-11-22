@@ -32,10 +32,64 @@ preserved in git history) as a modern Next.js application.
 
 | Layer | Choice |
 |---|---|
-| Framework | Next.js 16 (App Router) + TypeScript |
-| UI | Tailwind CSS 4 + shadcn/ui, Lucide icons |
-| Database | Prisma ORM + SQLite |
+| Frontend | Next.js 16 (App Router) + TypeScript, Tailwind CSS 4 + shadcn/ui, Lucide icons |
+| Demo backend | Next.js API routes + Prisma ORM + SQLite |
+| Production backend | **Java 21 + Spring Boot 3.3** — JWT auth, PostgreSQL/H2, Flyway, Docker ([backend README](mini-services/udhaar-backend/README.md)) |
 | Voice fallback | z-ai-web-dev-sdk ASR (server-side) |
+
+## Architecture — three ways to run
+
+| Mode | Data lives in | Use it for |
+|---|---|---|
+| [**GitHub Pages**](https://aaron-samuvel.github.io/udhaar-khata/) | browser `localStorage` | Try it instantly, zero install |
+| **Next.js full-stack** (this repo root) | SQLite via Prisma | Local demo with server voice fallback |
+| **Spring Boot backend** ([`mini-services/udhaar-backend`](mini-services/udhaar-backend/README.md)) | PostgreSQL (prod) / H2 (dev) | Production, multi-shop, heavy load |
+
+The frontend speaks ONE api contract. The Spring backend implements it
+exactly (same paths, status codes, error strings), so pointing Next.js at it
+is a single env var:
+
+```bash
+# in the Next.js .env
+API_BACKEND_URL=http://localhost:8080   # /api/* is proxied to Spring Boot
+```
+
+## Production Backend (Java Spring Boot)
+
+```bash
+cd mini-services/udhaar-backend
+mvn spring-boot:run            # dev (H2, auto-seeded demo shop)
+# or production:
+UDHAAR_JWT_SECRET=$(openssl rand -base64 48) docker compose up -d --build
+```
+
+- JWT signup/login (`/api/auth/*`), every ledger row scoped per shop
+- Stateless = scale horizontally (`docker compose up -d --scale app=4`)
+- Swagger UI at `/swagger-ui.html`, health at `/actuator/health`
+- Login/signup rate limiting, BCrypt, JSON 401/403, CORS allow-list
+
+## Project Assessment — what was missing, what's now added
+
+An honest audit of the project before this update, and what was done:
+
+| Gap found | Status now |
+|---|---|
+| No production-grade backend (SQLite + Next API routes don't scale to many shops) | **Done** — Spring Boot service with JWT multi-tenancy, PostgreSQL, Flyway, Docker |
+| No auth / accounts — anyone using the deployment shares one ledger | **Done** — accounts + per-shop isolation; legacy anonymous mode keeps the demo frontend working unchanged |
+| Frontend could not switch backends without code changes | **Done** — one env var (`API_BACKEND_URL`) proxies the whole `/api` surface |
+| Offline restore broken on GitHub Pages (`/api/import` 404 in the static build) | **Fixed** — the in-browser ledger now implements restore |
+| A `.gitignore` rule (`local-*`) silently excluded the static ledger file from git — fresh clones could not build | **Fixed** — rule negated, file committed |
+| Backup format was Next-only | **Done** — backup JSON v2 is byte-compatible across Next.js, Spring Boot and the browser ledger |
+| CI pipeline | **Pending** — needs a GitHub token with `workflow` scope (see roadmap) |
+
+## Roadmap
+
+- [ ] CI/CD on GitHub Actions (blocked: deploy token needs the `workflow` scope — run `GH_TOKEN=… bash scripts/deploy-pages.sh` manually meanwhile)
+- [ ] Auth UI in the frontend (the backend API is ready; the UI still runs in legacy/demo mode)
+- [ ] Refresh-token rotation + per-device sessions
+- [ ] Shared rate-limit store (Redis) when running many backend replicas
+- [ ] Server-side ASR in the Spring service (browser Web Speech covers most browsers today)
+- [ ] Observability stack (OpenTelemetry traces + Grafana)
 
 ## Getting Started
 
@@ -72,7 +126,8 @@ No environment secrets required beyond a local `DATABASE_URL` (created automatic
 ## Live Demo on GitHub Pages
 
 A fully static build is deployed to **https://aaron-samuvel.github.io/udhaar-khata/**
-(via the `deploy-pages.yml` GitHub Actions workflow). GitHub Pages cannot host a
+(serving from the `gh-pages` branch; redeploy with `GH_TOKEN=… bash scripts/deploy-pages.sh`).
+GitHub Pages cannot host a
 server, so the demo runs an identical in-browser ledger: entries, balances,
 reminders, reports and settings work exactly the same, with data stored in
 `localStorage` on your device (backup/restore is the transport between devices).

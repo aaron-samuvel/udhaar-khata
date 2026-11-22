@@ -64,3 +64,10 @@ db/
 out/
 .next-static/
 .api-parked/
+
+# Spring Boot backend build/runtime artifacts
+mini-services/udhaar-backend/target/
+mini-services/udhaar-backend/data/
+
+# sandbox runtime pid
+.zscripts/dev.pid

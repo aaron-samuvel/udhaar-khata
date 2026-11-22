@@ -1,0 +1,59 @@
+server:
+  port: ${UDHAAR_PORT:8080}
+  compression:
+    enabled: true
+    mime-types: application/json,text/csv,text/plain
+    min-response-size: 2048
+
+spring:
+  application:
+    name: udhaar-khata-backend
+  datasource:
+    # Dev/default profile: embedded H2 file DB (zero-config). Production uses
+    # the `postgres` profile (see application-postgres.yml / docker-compose).
+    url: jdbc:h2:file:./data/udhaar-khata;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+  jpa:
+    hibernate:
+      # Flyway owns the schema (V1__init.sql); Hibernate never mutates it.
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+udhaar:
+  # Legacy/demo compatibility: requests WITHOUT a Bearer token are served
+  # against the auto-seeded demo shop, so the existing Next.js frontend
+  # works unchanged. Set UDHAAR_LEGACY_ANONYMOUS=false for strict multi-user
+  # production (every /api call then requires a JWT).
+  legacy-anonymous: ${UDHAAR_LEGACY_ANONYMOUS:true}
+  cors:
+    allowed-origins: ${UDHAAR_CORS_ORIGINS:http://localhost:3000,https://aaron-samuvel.github.io}
+  jwt:
+    secret: ${UDHAAR_JWT_SECRET:dev-only-secret-change-me-min-32-bytes-long!!}
+    ttl-days: ${UDHAAR_JWT_TTL_DAYS:7}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method

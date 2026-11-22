@@ -1,0 +1,12 @@
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: ${UDHAAR_DB_URL:jdbc:postgresql://${UDHAAR_DB_HOST:localhost}:${UDHAAR_DB_PORT:5432}/${UDHAAR_DB_NAME:udhaar}}
+    username: ${UDHAAR_DB_USER:udhaar}
+    password: ${UDHAAR_DB_PASSWORD:udhaar}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${UDHAAR_DB_POOL:30}
+      minimum-idle: 10

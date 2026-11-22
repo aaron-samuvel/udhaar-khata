@@ -1,0 +1,11 @@
+{
+  "name": "udhaar-khata-backend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Spring Boot backend for Udhaar Khata (Java 21, port 8080)",
+  "scripts": {
+    "dev": "mvn -q -DskipTests spring-boot:run",
+    "build": "mvn -q -DskipTests package",
+    "start": "java -jar target/udhaar-khata-backend.jar"
+  }
+}
