@@ -1,0 +1,18 @@
+name: Greetings
+on: [pull_request_target, issues]
+permissions:
+  issues: write
+  pull-requests: write
+jobs:
+  greeting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/first-interaction@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Thanks for opening your first issue in Udhaar Khata!
+            Please fill in the template details so the problem can be reproduced quickly.
+          pr-message: |
+            Thanks for your first pull request!
+            Please make sure the ledger guardrails hold: integer paise, unit-safe parsing, reversals-not-deletions.
