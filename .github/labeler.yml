@@ -1,0 +1,13 @@
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+
+workflows:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
+
+app:
+  - changed-files:
+      - any-glob-to-any-file: "src/**"
