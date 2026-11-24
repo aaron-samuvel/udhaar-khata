@@ -138,6 +138,11 @@ export const QUANTITY_UNITS = new Set([
   "tins",
 ]);
 
+// Generic Hinglish goods/filler nouns. They appear all over shop sentences
+// ("500 ka maal Ramesh ko diya") but can never be the customer's name —
+// without this set the name scan latches onto them ("Maal Ramesh").
+const GOODS_NOUNS = new Set(["maal", "saman", "samaan", "sauda", "saudaa"]);
+
 const NAME_STOP = new Set([
   "ne",
   "ko",
@@ -173,6 +178,7 @@ const NAME_STOP = new Set([
   ...PAYMENT_WORDS,
   ...UDHAAR_WORDS,
   ...QUANTITY_UNITS,
+  ...GOODS_NOUNS,
 ]);
 
 const AMOUNT_PATTERNS: RegExp[] = [
@@ -193,7 +199,24 @@ function detectType(tokensLower: string[]): TxnType | null {
   return null;
 }
 
+/**
+ * A minus sign directly attached to the amount ("took -50", "₹-50",
+ * "paid -50 rupees"). Guarded so trailing "75/-" and ranges like "1-2 kg"
+ * (digit before the dash) are not misread as negatives.
+ */
+const NEGATIVE_AMOUNT_RE =
+  /(?:^|\s|₹|rs\.?|rupees?|inr)-\s*(?:₹\s*|rs\.?\s*|rupees?\s*|inr\s*)?\d/i;
+
 function extractAmount(text: string): number | null {
+  const magnitude = extractAmountMagnitude(text);
+  if (magnitude === null) return null;
+  // A signed amount is never silently flipped into a positive charge: the
+  // negative value flows through to parse(), whose "amount must be greater
+  // than zero" guard rejects the entry with a clear error instead.
+  return NEGATIVE_AMOUNT_RE.test(text) ? -magnitude : magnitude;
+}
+
+function extractAmountMagnitude(text: string): number | null {
   for (const pattern of AMOUNT_PATTERNS) {
     const matches = [...text.matchAll(pattern)].map((m) => m[1]);
     if (matches.length > 0) {

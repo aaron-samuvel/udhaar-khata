@@ -77,11 +77,15 @@ export function nameKey(name: string): string {
   return (name ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 }
 
-/** Keep only 10-digit Indian mobile numbers (strips +91 / 91 prefixes). */
+/** Keep only 10-digit Indian mobile numbers (strips +91 / 91 prefixes).
+ * Also accepts the common Indian written form with the STD-0 prefix —
+ * "0 98765 43210" / "09876543210" — which used to be silently rejected,
+ * leaving the customer without WhatsApp reminders. */
 export function normalizePhone(phone?: string | null): string | null {
   if (!phone) return null;
   let digits = String(phone).replace(/\D/g, "");
   if (digits.startsWith("91") && digits.length === 12) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
   if (digits.length === 10) return digits;
   return null;
 }

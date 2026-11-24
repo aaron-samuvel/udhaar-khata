@@ -29,7 +29,7 @@ export function istDayStart(d: Date = new Date()): Date {
   return new Date(`${istDayKey(d)}T00:00:00+05:30`);
 }
 
-/** Readable IST timestamp like "21 Nov, 5:12 PM". */
+/** Readable IST timestamp like "2025-11-21 17:12 IST". */
 export function istTimestamp(d: Date | string): string {
   const t = (typeof d === "string" ? new Date(d) : d);
   return new Date(t.getTime() + 5.5 * 3600 * 1000)
