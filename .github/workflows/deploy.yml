@@ -1,0 +1,44 @@
+name: Deploy static site to GitHub Pages
+
+# Builds the static export (browser-only ledger, no server) and publishes it
+# to the gh-pages branch, which the repository's Pages settings serve. Every
+# push to main redeploys, so the live site always matches main;
+# workflow_dispatch allows manual rebuilds without a code change.
+# force_orphan stays false (default) so gh-pages keeps commit history — the
+# profile README's "Last Pages deploy" stamp reads the gh-pages tail commit.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bunx prisma generate
+
+      - name: Build static export
+        run: bun run build:static
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./out
