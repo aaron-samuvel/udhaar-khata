@@ -4,8 +4,15 @@ name: Deploy static site to GitHub Pages
 # to the gh-pages branch, which the repository's Pages settings serve. Every
 # push to main redeploys, so the live site always matches main;
 # workflow_dispatch allows manual rebuilds without a code change.
-# force_orphan stays false (default) so gh-pages keeps commit history — the
-# profile README's "Last Pages deploy" stamp reads the gh-pages tail commit.
+#
+# Notes:
+# - The static export lands in .next-static/ (custom distDir in
+#   next.config.ts), NOT out/.
+# - Publishing reuses the checkout's persisted GITHUB_TOKEN credentials
+#   (the same mechanism the profile repo's refresh workflow uses) instead
+#   of embedding the token in a remote URL, and keeps gh-pages commit
+#   history so the profile README's "Last Pages deploy" stamp stays
+#   meaningful.
 
 on:
   push:
@@ -37,8 +44,25 @@ jobs:
         run: bun run build:static
 
       - name: Publish to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./out
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Fetch the current gh-pages tip and work on it in a worktree so
+          # the branch keeps its history (each deploy is one new commit).
+          git fetch --depth=1 origin gh-pages
+          git worktree add deploy-tree FETCH_HEAD
+
+          cd deploy-tree
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+          cp -a ../.next-static/. .
+          touch .nojekyll
+          git add -A
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "deploy: static site build ${GITHUB_SHA}"
+            git push origin HEAD:gh-pages
+            echo "deployed ${GITHUB_SHA} to gh-pages"
+          else
+            echo "gh-pages already up to date — nothing to deploy"
+          fi
